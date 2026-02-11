@@ -1,0 +1,75 @@
+###############################################
+# MediaMTX — ZyraVision Streaming Server
+###############################################
+
+# ─── Global ─────────────────────────────────
+logLevel: info
+logDestinations: [stdout]
+
+# ─── Authentication ─────────────────────────
+# Single admin user with full access (API + streams)
+# Viewers access HLS/WebRTC without auth via Nginx proxy
+authMethod: internal
+authInternalUsers:
+  - user: zyravision
+    pass: zyravision_api_secret
+    permissions:
+      - action: api
+      - action: read
+      - action: publish
+      - action: playback
+      - action: metrics
+      - action: pprof
+
+# ─── Control API ────────────────────────────
+api: yes
+apiAddress: :9997
+
+# ─── RTSP Server ────────────────────────────
+rtsp: yes
+rtspAddress: :8554
+rtspTransports: [tcp, udp]
+
+# ─── RTMP Server ────────────────────────────
+rtmp: yes
+rtmpAddress: :1935
+
+# ─── HLS Server ─────────────────────────────
+hls: yes
+hlsAddress: :8888
+hlsVariant: lowLatency
+hlsSegmentCount: 7
+hlsSegmentDuration: 2s
+hlsPartDuration: 500ms
+hlsAlwaysRemux: yes
+
+# ─── WebRTC Server ──────────────────────────
+webrtc: yes
+webrtcAddress: :8889
+
+# ─── SRT Server ─────────────────────────────
+srt: no
+
+# ─── Playback Server ────────────────────────
+playback: yes
+playbackAddress: :9996
+
+# ─── Default Path Settings ──────────────────
+pathDefaults:
+  source: publisher
+  sourceOnDemand: yes
+  maxReaders: 0
+  # Gravacao continua: habilitada por padrao para todas as cameras
+  # O Laravel controla quais cameras gravam via API (editPath record: true/false)
+  record: no
+  recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S-%f
+  recordFormat: fmp4
+  # Segmentos de 1 minuto: equilibrio entre acesso rapido e overhead de arquivos
+  # Cada segmento completo fica disponivel para playback quase em tempo real
+  recordSegmentDuration: 1m
+  recordDeleteAfter: "0s"
+  overridePublisher: yes
+
+# ─── Paths ──────────────────────────────────
+# Paths are managed dynamically via the API by Laravel
+paths:

@@ -1,0 +1,69 @@
+---
+description: Padroes de desenvolvimento frontend Vue.js para o ZyraVision
+globs: "**/*.{vue,ts,tsx}"
+alwaysApply: false
+---
+
+# Vue Frontend — Padroes ZyraVision
+
+## Composition API + TypeScript
+- SEMPRE usar `<script setup lang="ts">`
+- NUNCA usar Options API
+- SEMPRE tipar props com `defineProps<T>()`
+- SEMPRE tipar emits com `defineEmits<T>()`
+
+```vue
+<script setup lang="ts">
+import { ref, computed } from 'vue'
+import type { Camera } from '@/types/camera'
+
+const props = defineProps<{
+  camera: Camera
+  isLive?: boolean
+}>()
+
+const emit = defineEmits<{
+  select: [camera: Camera]
+  delete: [id: string]
+}>()
+</script>
+```
+
+## Estrutura de Pastas Frontend
+
+```
+resources/js/
+  Components/       # Componentes reutilizaveis do Design System
+    UI/             # Botoes, Inputs, Modais, Tables
+    Layout/         # Sidebar, Header, Footer
+    Camera/         # Componentes de camera
+    Stream/         # Players de video
+  Pages/            # Paginas Inertia (1 por rota)
+  Composables/      # Hooks reutilizaveis (useCamera, useStream)
+  Types/            # Interfaces TypeScript
+  Stores/           # Estado global (Pinia se necessario)
+  Utils/            # Funcoes utilitarias
+```
+
+## Componentes
+- Prefixo `Zy` para componentes do Design System: `ZyButton`, `ZyTable`, `ZyModal`
+- Props tipadas e documentadas
+- Slots para customizacao
+- Emits tipados
+
+## Paginas Inertia
+- Uma pagina por rota
+- Receber dados via props do controller
+- Layout compartilhado via `defineOptions({ layout: AuthLayout })`
+
+## Estilos
+- SOMENTE Tailwind CSS via classes utilitarias
+- NUNCA `<style>` com CSS customizado
+- NUNCA CSS inline
+- Usar tokens do Design System via `tailwind.config.ts`
+- Responsivo: mobile-first (`sm:`, `md:`, `lg:`, `xl:`)
+
+## Formularios
+- Usar `useForm` do Inertia
+- Validacao client-side com Zod ou Valibot
+- Feedback visual de erros consistente

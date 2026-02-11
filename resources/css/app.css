@@ -1,0 +1,88 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─── Google Fonts: Inter + JetBrains Mono ─────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+/* ─── CSS Custom Properties (Design Tokens) ────────────────── */
+:root {
+    /* Surface colors — Light Theme */
+    --zy-surface-primary: #FFFFFF;
+    --zy-surface-secondary: #F8FAFC;
+    --zy-surface-tertiary: #F1F5F9;
+    --zy-surface-elevated: #FFFFFF;
+
+    /* Text colors — Light Theme */
+    --zy-text-primary: #0F172A;
+    --zy-text-secondary: #475569;
+    --zy-text-tertiary: #94A3B8;
+    --zy-text-inverse: #FFFFFF;
+
+    /* Border */
+    --zy-border-default: #E2E8F0;
+    --zy-border-focus: #1A73E8;
+
+    /* Transition defaults */
+    --zy-transition-fast: 150ms ease;
+    --zy-transition-normal: 300ms ease;
+    --zy-transition-slow: 500ms ease;
+}
+
+/* ─── Dark Theme ───────────────────────────────────────────── */
+.dark {
+    --zy-surface-primary: #0F172A;
+    --zy-surface-secondary: #1E293B;
+    --zy-surface-tertiary: #334155;
+    --zy-surface-elevated: #1E293B;
+
+    --zy-text-primary: #F8FAFC;
+    --zy-text-secondary: #CBD5E1;
+    --zy-text-tertiary: #64748B;
+    --zy-text-inverse: #0F172A;
+
+    --zy-border-default: #334155;
+    --zy-border-focus: #5CADFF;
+}
+
+/* ─── Base Styles ──────────────────────────────────────────── */
+@layer base {
+    html {
+        @apply scroll-smooth antialiased;
+        font-family: 'Inter', system-ui, -apple-system, sans-serif;
+    }
+
+    body {
+        @apply bg-[var(--zy-surface-primary)] text-[var(--zy-text-primary)] transition-colors duration-300;
+    }
+
+    ::selection {
+        @apply bg-primary-500/20 text-primary-900 dark:text-primary-100;
+    }
+
+    /* Focus ring global */
+    *:focus-visible {
+        @apply outline-none ring-2 ring-primary-500/50 ring-offset-2 ring-offset-[var(--zy-surface-primary)];
+    }
+}
+
+/* ─── Utility Components ───────────────────────────────────── */
+@layer components {
+    /* Scrollbar custom */
+    .zy-scrollbar {
+        scrollbar-width: thin;
+        scrollbar-color: theme('colors.dark.300') transparent;
+    }
+
+    .zy-scrollbar::-webkit-scrollbar {
+        @apply w-1.5;
+    }
+
+    .zy-scrollbar::-webkit-scrollbar-track {
+        @apply bg-transparent;
+    }
+
+    .zy-scrollbar::-webkit-scrollbar-thumb {
+        @apply bg-dark-300 rounded-full dark:bg-dark-600;
+    }
+}

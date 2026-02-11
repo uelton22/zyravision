@@ -1,0 +1,75 @@
+---
+description: Contexto geral do projeto ZyraVision - plataforma CFTV enterprise. Sempre aplicar.
+alwaysApply: true
+---
+
+# ZyraVision — Projeto CFTV Enterprise
+
+## Visao Geral
+ZyraVision e uma plataforma profissional de monitoramento CFTV com Laravel. Gerencia milhares de cameras, ingestao, processamento, gravacao, reproducao e distribuicao de video em tempo real.
+
+## Stack Obrigatoria
+
+| Camada | Tecnologia | Versao |
+|--------|-----------|--------|
+| Backend | Laravel | 11.x |
+| Backend | PHP | 8.2.x |
+| Frontend | Vue.js | 3.4.x (Composition API) |
+| Bridge | Inertia.js | 1.x |
+| Estilos | Tailwind CSS | 3.4.x |
+| Tipagem | TypeScript | 5.x |
+| Build | Vite | 5.x |
+| Runtime | Node.js | 20 LTS |
+| Banco | PostgreSQL | 15+ |
+| Cache | Redis | 7+ |
+| Mobile | Flutter | 3.x (Dart 3.x) |
+
+## Regras Absolutas
+- NUNCA usar Tailwind 4.x
+- NUNCA usar Alpine.js
+- NUNCA misturar Options API com Composition API
+- NUNCA criar CSS inline ou estilos ad-hoc por tela
+- SEMPRE usar TypeScript no frontend
+- SEMPRE seguir o Design System (docs/cdd/design-system/)
+- SEMPRE usar componentes reutilizaveis
+- Laravel e o Control Plane — NUNCA processa video diretamente
+- Processamento pesado em servicos dedicados (FFmpeg, AI Service)
+
+## Arquitetura de Camadas
+1. **Landing Page** — Pagina publica de marketing e conversao
+2. **Frontend** — Vue 3 + Inertia + Tailwind (dashboard)
+3. **Backend** — Laravel API / Control Plane
+4. **Media Services** — FFmpeg / MediaMTX / GStreamer
+5. **Storage Layer** — Local / NAS / S3 / MinIO
+6. **AI Services** — Microservicos Python (PyTorch/OpenCV)
+7. **Mobile** — Flutter app consumindo API REST
+
+## Contato Comercial
+- WhatsApp: +55 64 99625-7284
+- Email: contato@ziravision.com.br
+- Demo: /demo (usuarios pre-configurados)
+
+## Multi-Tenant
+- Isolamento logico por `tenant_id`
+- RBAC com roles: SuperAdmin, Admin, Operador, Visualizador
+- Quotas por tenant: cameras, storage, retencao
+
+## Documentacao CDD
+- ADRs: docs/cdd/adr/ (28 decisoes arquiteturais)
+- Design System: docs/cdd/design-system/ (tokens, componentes, patterns)
+- API: docs/cdd/api/ (endpoints, auth, mobile spec)
+- Mobile: docs/cdd/mobile/ (Flutter architecture)
+- Guidelines: docs/cdd/guidelines/ (coding standards, git workflow)
+- Architecture: docs/cdd/architecture/ (system overview, tech stack)
+
+## Referencia Rapida de Caminhos
+- Componentes Vue: resources/js/Components/UI/Zy*.vue
+- Paginas: resources/js/Pages/{Domain}/*.vue
+- Layouts: resources/js/Layouts/*.vue
+- Types: resources/js/Types/*.ts
+- Composables: resources/js/Composables/use*.ts
+- Controllers: app/Http/Controllers/Api/V1/
+- Services: app/Domains/{Domain}/Services/
+- Models: app/Domains/{Domain}/Models/
+- Migrations: database/migrations/
+- Tests: tests/Feature/ e tests/Unit/

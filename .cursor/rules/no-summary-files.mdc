@@ -1,0 +1,40 @@
+---
+description: Nao criar arquivos de documentacao ou resumo ao final de tarefas
+alwaysApply: true
+---
+
+# Politica de Documentacao — ZyraVision
+
+## Resumo de Tarefas
+- NUNCA criar arquivos .md de resumo ao final de tarefas
+- NUNCA criar arquivos de documentacao automatica tipo "TASK_SUMMARY.md"
+- NUNCA criar documentos recapitulativos de trabalho realizado
+
+## Comunicacao de Progresso
+- SEMPRE resumir o trabalho no proprio chat
+- Incluir lista concisa do que foi feito
+- Mencionar arquivos criados/modificados
+- Destacar pontos de atencao ou proximos passos
+
+## Excecoes
+- Arquivos de documentacao solicitados explicitamente pelo usuario
+- README.md quando criar um novo projeto/modulo do zero
+- Documentacao de API quando especificamente requisitada
+- ADRs (Architecture Decision Records) quando solicitados
+
+## Formato de Resumo no Chat
+Ao concluir uma tarefa, use este formato:
+
+```
+Tarefa concluida! Aqui esta o que foi feito:
+
+✅ [Acao 1] - arquivo1.php, arquivo2.vue
+✅ [Acao 2] - arquivo3.ts
+✅ [Acao 3] - arquivo4.php
+
+Proximos passos sugeridos:
+- [Sugestao 1]
+- [Sugestao 2]
+```
+
+Mantenha a comunicacao clara e direta no chat, sem criar arquivos adicionais.

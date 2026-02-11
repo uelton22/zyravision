@@ -1,0 +1,338 @@
+<?php
+
+namespace App\Http\Controllers;
+
+use App\Models\Camera;
+use App\Models\RecordingSegment;
+use App\Models\StorageBackend;
+use App\Services\Storage\StorageBackendManager;
+use Carbon\Carbon;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\File;
+use Illuminate\Support\Facades\Log;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
+use Symfony\Component\HttpFoundation\StreamedResponse;
+
+class SegmentController extends Controller
+{
+    public function __construct(
+        private StorageBackendManager $storageManager,
+    ) {}
+
+    /**
+     * GET /api/cameras/{camera}/timeline
+     *
+     * Return available segments for a camera within a time range.
+     * Used by the frontend timeline player to know what footage is available.
+     */
+    public function timeline(Request $request, Camera $camera): JsonResponse
+    {
+        $this->authorizeCamera($camera);
+
+        $request->validate([
+            'start' => 'nullable|date',
+            'end' => 'nullable|date',
+        ]);
+
+        $start = $request->input('start')
+            ? Carbon::parse($request->input('start'))
+            : now()->subHours(24);
+
+        $end = $request->input('end')
+            ? Carbon::parse($request->input('end'))
+            : now();
+
+        $segments = RecordingSegment::forCamera($camera->id)
+            ->available()
+            ->inTimeRange($start, $end)
+            ->orderBy('starts_at')
+            ->get()
+            ->map(fn (RecordingSegment $s) => [
+                'id' => $s->id,
+                'starts_at' => $s->starts_at->toIso8601String(),
+                'ends_at' => $s->ends_at?->toIso8601String(),
+                'duration_seconds' => $s->duration_seconds,
+                'file_size_bytes' => $s->file_size_bytes,
+                'status' => $s->status,
+                'has_local' => $s->isLocal(),
+                'has_remote' => $s->isRemote(),
+            ]);
+
+        // Build timeline ranges (contiguous segments grouped)
+        $ranges = $this->buildTimelineRanges($segments->toArray());
+
+        return response()->json([
+            'camera_id' => $camera->id,
+            'range' => [
+                'start' => $start->toIso8601String(),
+                'end' => $end->toIso8601String(),
+            ],
+            'segments' => $segments,
+            'ranges' => $ranges,
+            'total_segments' => $segments->count(),
+            'total_duration_seconds' => $segments->sum('duration_seconds'),
+        ]);
+    }
+
+    /**
+     * GET /api/cameras/{camera}/timeline/dates
+     *
+     * Return dates that have available recordings for a camera.
+     * Used by the calendar picker in the frontend.
+     */
+    public function availableDates(Request $request, Camera $camera): JsonResponse
+    {
+        $this->authorizeCamera($camera);
+
+        $dates = RecordingSegment::forCamera($camera->id)
+            ->available()
+            ->selectRaw("DATE(starts_at) as date, COUNT(*) as segment_count, SUM(duration_seconds) as total_seconds")
+            ->groupByRaw('DATE(starts_at)')
+            ->orderByDesc('date')
+            ->limit(90)
+            ->get()
+            ->map(fn ($row) => [
+                'date' => $row->date,
+                'segment_count' => (int) $row->segment_count,
+                'total_hours' => round($row->total_seconds / 3600, 1),
+            ]);
+
+        return response()->json(['dates' => $dates]);
+    }
+
+    /**
+     * GET /api/segments/{segment}/stream
+     *
+     * Stream a specific segment MP4 file (with range support for seeking).
+     */
+    public function stream(Request $request, RecordingSegment $segment): BinaryFileResponse|StreamedResponse
+    {
+        $this->authorizeSegment($segment);
+
+        $localFile = $this->resolveSegmentFile($segment);
+
+        if (! $localFile) {
+            abort(404, 'Segmento nao encontrado.');
+        }
+
+        return response()->file($localFile, [
+            'Content-Type' => 'video/mp4',
+            'Accept-Ranges' => 'bytes',
+            'Cache-Control' => 'public, max-age=86400',
+        ]);
+    }
+
+    /**
+     * GET /api/segments/{segment}/download
+     *
+     * Download a specific segment.
+     */
+    public function download(Request $request, RecordingSegment $segment): BinaryFileResponse
+    {
+        $this->authorizeSegment($segment);
+
+        $localFile = $this->resolveSegmentFile($segment);
+
+        if (! $localFile) {
+            abort(404, 'Segmento nao encontrado.');
+        }
+
+        $camera = $segment->camera;
+        $date = $segment->starts_at->format('Y-m-d_H-i-s');
+        $filename = "gravacao_{$camera->name}_{$date}.mp4";
+        $filename = preg_replace('/[^a-zA-Z0-9_\-\.]/', '_', $filename);
+
+        return response()->download($localFile, $filename, [
+            'Content-Type' => 'video/mp4',
+        ]);
+    }
+
+    /**
+     * GET /api/cameras/{camera}/playback?time=2026-02-10T13:00:00Z
+     *
+     * Find and redirect to the segment that contains the specified time.
+     * This is the main entry point for timeline navigation.
+     */
+    public function playbackAtTime(Request $request, Camera $camera): JsonResponse
+    {
+        $this->authorizeCamera($camera);
+
+        $request->validate([
+            'time' => 'required|date',
+        ]);
+
+        $time = Carbon::parse($request->input('time'));
+
+        // Find segment containing this time
+        $segment = RecordingSegment::forCamera($camera->id)
+            ->available()
+            ->where('starts_at', '<=', $time)
+            ->where(function ($q) use ($time) {
+                $q->where('ends_at', '>=', $time)
+                    ->orWhereNull('ends_at');
+            })
+            ->first();
+
+        if (! $segment) {
+            // Find closest segment after the requested time
+            $segment = RecordingSegment::forCamera($camera->id)
+                ->available()
+                ->where('starts_at', '>=', $time)
+                ->orderBy('starts_at')
+                ->first();
+        }
+
+        if (! $segment) {
+            return response()->json([
+                'found' => false,
+                'message' => 'Nenhuma gravacao encontrada para o horario solicitado.',
+            ], 404);
+        }
+
+        // Calculate offset within the segment
+        $offset = max(0, $time->diffInSeconds($segment->starts_at, false));
+
+        return response()->json([
+            'found' => true,
+            'segment' => [
+                'id' => $segment->id,
+                'starts_at' => $segment->starts_at->toIso8601String(),
+                'ends_at' => $segment->ends_at?->toIso8601String(),
+                'duration_seconds' => $segment->duration_seconds,
+                'stream_url' => route('segments.stream', $segment),
+            ],
+            'offset_seconds' => $offset,
+        ]);
+    }
+
+    /**
+     * Resolve a segment file to a local path (local file or download from remote).
+     * Funciona para gravacoes no disco (local) e na nuvem (remote).
+     */
+    private function resolveSegmentFile(RecordingSegment $segment): ?string
+    {
+        // 1. Preferir arquivo local se existir e for legivel
+        if ($segment->local_path && File::isFile($segment->local_path) && File::isReadable($segment->local_path)) {
+            return $segment->local_path;
+        }
+
+        // 2. Se nao tem local ou arquivo foi removido, baixar do storage remoto
+        if ($segment->remote_path && $segment->storage_backend_id) {
+            return $this->downloadFromRemote($segment);
+        }
+
+        return null;
+    }
+
+    /**
+     * Download segment from remote storage to local cache.
+     */
+    private function downloadFromRemote(RecordingSegment $segment): ?string
+    {
+        $backend = StorageBackend::find($segment->storage_backend_id);
+
+        if (! $backend) {
+            return null;
+        }
+
+        try {
+            $driver = $this->storageManager->getDriver($backend);
+
+            // Cache directory
+            $cacheDir = storage_path("app/segment_cache/{$segment->camera_id}");
+
+            if (! File::isDirectory($cacheDir)) {
+                File::makeDirectory($cacheDir, 0755, true);
+            }
+
+            $localCache = $cacheDir . '/' . $segment->filename;
+
+            // Already cached?
+            if (File::exists($localCache)) {
+                $localSize = File::size($localCache);
+                if ($localSize > 0 && abs($localSize - $segment->file_size_bytes) < 1024) {
+                    return $localCache;
+                }
+            }
+
+            // Download
+            $contents = $driver->retrieve($segment->remote_path);
+            File::put($localCache, $contents);
+
+            Log::debug('Segmento baixado do storage remoto.', [
+                'segment_id' => $segment->id,
+                'remote_path' => $segment->remote_path,
+                'cache_path' => $localCache,
+            ]);
+
+            return $localCache;
+        } catch (\Throwable $e) {
+            Log::error('Erro ao baixar segmento do storage remoto.', [
+                'segment_id' => $segment->id,
+                'error' => $e->getMessage(),
+            ]);
+
+            return null;
+        }
+    }
+
+    /**
+     * Build contiguous time ranges from segment list.
+     */
+    private function buildTimelineRanges(array $segments): array
+    {
+        if (empty($segments)) {
+            return [];
+        }
+
+        $ranges = [];
+        $currentRange = null;
+        $gapThreshold = 120; // Max gap (seconds) to consider contiguous
+
+        foreach ($segments as $seg) {
+            $start = Carbon::parse($seg['starts_at']);
+            $end = $seg['ends_at'] ? Carbon::parse($seg['ends_at']) : $start->copy()->addSeconds($seg['duration_seconds']);
+
+            if (! $currentRange) {
+                $currentRange = ['start' => $start->toIso8601String(), 'end' => $end->toIso8601String()];
+
+                continue;
+            }
+
+            $prevEnd = Carbon::parse($currentRange['end']);
+            $gap = $prevEnd->diffInSeconds($start, false);
+
+            if ($gap <= $gapThreshold) {
+                // Extend current range
+                $currentRange['end'] = $end->toIso8601String();
+            } else {
+                // Gap detected, close current range and start new
+                $ranges[] = $currentRange;
+                $currentRange = ['start' => $start->toIso8601String(), 'end' => $end->toIso8601String()];
+            }
+        }
+
+        if ($currentRange) {
+            $ranges[] = $currentRange;
+        }
+
+        return $ranges;
+    }
+
+    private function authorizeCamera(Camera $camera): void
+    {
+        $user = auth()->user();
+        if (! $user->isSuperAdmin() && $camera->tenant_id !== $user->tenant_id) {
+            abort(403, 'Acesso negado.');
+        }
+    }
+
+    private function authorizeSegment(RecordingSegment $segment): void
+    {
+        $user = auth()->user();
+        if (! $user->isSuperAdmin() && $segment->tenant_id !== $user->tenant_id) {
+            abort(403, 'Acesso negado.');
+        }
+    }
+}

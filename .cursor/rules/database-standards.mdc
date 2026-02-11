@@ -1,0 +1,58 @@
+---
+description: Padroes de banco de dados e migrations para o ZyraVision
+globs: "database/**/*.php,app/Models/**/*.php"
+alwaysApply: false
+---
+
+# Database Standards — ZyraVision
+
+## PostgreSQL como banco principal
+- SEMPRE PostgreSQL 15+
+- NUNCA MySQL/MariaDB
+
+## Migrations
+- Nomes descritivos: `create_cameras_table`, `add_gpu_config_to_streams`
+- SEMPRE ter `down()` funcional
+- UUIDs como primary key (usar `$table->uuid('id')->primary()`)
+- SEMPRE `tenant_id` em tabelas multi-tenant
+- Timestamps obrigatorios: `created_at`, `updated_at`
+- Soft deletes em entidades criticas
+
+```php
+Schema::create('cameras', function (Blueprint $table) {
+    $table->uuid('id')->primary();
+    $table->foreignUuid('tenant_id')->constrained()->cascadeOnDelete();
+    $table->string('name');
+    $table->string('rtsp_url');
+    $table->string('status')->default('inactive');
+    $table->jsonb('metadata')->nullable();
+    $table->timestamps();
+    $table->softDeletes();
+
+    $table->index(['tenant_id', 'status']);
+});
+```
+
+## Indices
+- Indice composto em `[tenant_id, ...]` para queries multi-tenant
+- Indice em colunas de busca frequente
+- Indice parcial para soft deletes quando necessario
+- JSONB com indices GIN para metadados
+
+## Models
+- Usar `HasUuids` trait
+- Definir `$casts` para tipos complexos
+- Scopes: `scopeForTenant`, `scopeActive`
+- Relationships sempre tipadas
+
+## Naming Conventions
+- Tabelas: snake_case plural (`cameras`, `storage_pools`)
+- Colunas: snake_case (`tenant_id`, `rtsp_url`)
+- Foreign keys: `{model}_id` (`camera_id`, `user_id`)
+- Pivot tables: singular alphabetical (`camera_user`)
+
+## Performance
+- Eager loading obrigatorio (prevenir N+1)
+- Paginacao em TODAS as listagens
+- Cache de queries frequentes via Redis
+- Particionamento por data em tabelas de recordings/events

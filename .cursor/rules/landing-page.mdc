@@ -1,0 +1,79 @@
+---
+description: Regras para a Landing Page comercial do ZyraVision
+globs: "resources/js/Pages/Landing/**,resources/js/Components/Landing/**"
+alwaysApply: false
+---
+
+# Landing Page — ZyraVision
+
+## Contexto
+A landing page e a pagina publica de marketing do ZyraVision. Deve convencer o visitante a testar a plataforma ou entrar em contato. NAO usa o layout autenticado (AuthenticatedLayout). Usa layout proprio (LandingLayout).
+
+## Dados de Contato (NUNCA alterar sem autorizacao)
+- WhatsApp: +55 64 99625-7284 (link: https://wa.me/5564996257284)
+- Email: contato@ziravision.com.br
+- Demonstracao: /demo
+
+## Estrutura de Pagina — 13 secoes nesta ordem:
+1. Navbar (fixa, backdrop-blur)
+2. Hero (titulo + CTA + mockup dashboard)
+3. Social Proof / Logos de clientes
+4. Recursos / Features (grid 8 features)
+5. Como Funciona (3 passos com screenshots)
+6. Vantagens / Diferenciais (checklist visual)
+7. App Mobile (mockups celular)
+8. Planos e Precos (3 colunas)
+9. Depoimentos / Testimonials
+10. FAQ (accordion expandivel)
+11. CTA Final + Formulario de Contato
+12. Footer (links, contato, legal)
+13. WhatsApp FAB (botao flutuante fixo bottom-right)
+
+## Componentes Landing (SEM prefixo Zy — sao exclusivos)
+- LandingNavbar.vue
+- LandingHero.vue
+- LandingFeatures.vue
+- LandingHowItWorks.vue
+- LandingAdvantages.vue
+- LandingMobileApp.vue
+- LandingPricing.vue
+- LandingTestimonials.vue
+- LandingFAQ.vue
+- LandingContact.vue
+- LandingFooter.vue
+- WhatsAppButton.vue
+
+## Regras Visuais
+- MESMO Design System (cores, fontes, espacamento)
+- Sections alternando bg-white e bg-gray-50 (light) / bg-gray-900 e bg-gray-950 (dark)
+- Smooth scroll entre secoes
+- Animacoes sutis ao entrar no viewport (intersection observer)
+- Responsivo: mobile-first
+- Suporte dark mode
+- Imagens em WebP com lazy loading
+
+## WhatsApp FAB
+- Cor: bg-[#25D366] (verde WhatsApp)
+- Posicao: fixed bottom-6 right-6 z-50
+- Mensagem padrao: "Ola! Gostaria de saber mais sobre o ZyraVision."
+- Tooltip no hover
+- SEMPRE visivel em todas as paginas publicas
+
+## Formulario de Contato
+Campos: nome*, email*, telefone, empresa, qtd cameras (select), mensagem*
+Acao: POST /contact → salvar no banco + enviar email
+Feedback: toast de sucesso
+
+## Demo
+- Botao "Demonstracao" redireciona para /demo
+- Usuarios pre-configurados (admin, operador, viewer)
+- Banner "MODO DEMONSTRACAO" visivel
+- Reset automatico a cada 24h
+
+## SEO
+- Title, meta description, og:tags obrigatorios
+- Semantic HTML (h1 unico, sections, nav, footer)
+- Performance Lighthouse > 90
+
+## Documentacao completa
+Consultar: docs/cdd/design-system/patterns/landing-page.md

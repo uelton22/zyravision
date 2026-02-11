@@ -1,0 +1,122 @@
+---
+description: Padroes de desenvolvimento backend Laravel para o ZyraVision
+globs: "**/*.php"
+alwaysApply: false
+---
+
+# Laravel Backend — Padroes ZyraVision
+
+## Estrutura de Dominios
+Usar Domain-Driven Design simplificado:
+
+```
+app/Domains/{Domain}/
+  Models/
+  Services/
+  Actions/
+  DTOs/
+  Events/
+  Listeners/
+  Policies/
+  Enums/
+```
+
+Dominios: Auth, Tenant, Camera, Stream, Storage, User, Recording, AI, Notification
+
+## Controllers
+- Sempre em `app/Http/Controllers/Api/V1/`
+- Um controller por recurso
+- Metodos: index, show, store, update, destroy
+- Usar Form Requests para validacao
+- Retornar Resources/JsonResource
+
+```php
+// BOM
+class CameraController extends Controller
+{
+    public function index(IndexCameraRequest $request): CameraCollection
+    {
+        $cameras = $this->cameraService->list($request->validated());
+        return new CameraCollection($cameras);
+    }
+}
+```
+
+## Services
+- Logica de negocio em Services, NAO em Controllers
+- Services injetados via constructor
+- Retornam DTOs ou Models
+
+## Models
+- Usar UUIDs como primary key
+- Sempre definir `$fillable` ou `$guarded`
+- Sempre ter `tenant_id` em models multi-tenant
+- Usar Scopes para filtros recorrentes
+- Soft deletes em entidades criticas
+
+## API Responses
+- Sempre usar JSON Resources
+- Paginacao padrao: 25 items/pagina
+- Formato de erro consistente:
+
+```json
+{
+  "message": "Descricao do erro",
+  "errors": { "field": ["detalhe"] },
+  "code": "CAMERA_NOT_FOUND"
+}
+```
+
+## Queues e Jobs
+- Filas Redis via Laravel Horizon
+- Jobs implementam `ShouldQueue`
+- Retry: 3 tentativas com backoff exponencial
+- Jobs pesados (FFmpeg) em fila dedicada
+
+## Exception Handling
+
+```php
+// Exceptions de dominio em app/Domains/{Domain}/Exceptions/
+class CameraNotFoundException extends ModelNotFoundException {}
+class StorageQuotaExceededException extends DomainException {}
+class StreamAlreadyActiveException extends DomainException {}
+
+// Handler retorna JSON padronizado:
+// { "message": "...", "code": "CAMERA_NOT_FOUND", "errors": {} }
+```
+
+- Cada dominio tem suas exceptions
+- Handler mapeia exceptions para HTTP status codes
+- NUNCA retornar stack trace em producao
+- SEMPRE logar exceptions com contexto (tenant_id, user_id)
+
+## Tenant Isolation
+
+```php
+// Middleware EnsureTenant — OBRIGATORIO em todas as rotas
+// Scope automatico em Model base:
+abstract class TenantModel extends Model
+{
+    protected static function booted(): void
+    {
+        static::addGlobalScope('tenant', function ($query) {
+            $query->where('tenant_id', auth()->user()->tenant_id);
+        });
+        static::creating(function ($model) {
+            $model->tenant_id = auth()->user()->tenant_id;
+        });
+    }
+}
+```
+
+## Caching
+- Cache de queries frequentes: `Cache::remember('cameras:'.$tenantId, 60, ...)`
+- Invalidar cache ao criar/editar/excluir
+- Tags de cache por tenant: `Cache::tags(['tenant:'.$id])`
+- NUNCA cachear dados cross-tenant
+
+## Testes
+- Pest PHP para todos os testes
+- Feature tests para endpoints
+- Unit tests para Services e Actions
+- Factories para todos os Models

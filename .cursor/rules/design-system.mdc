@@ -1,0 +1,86 @@
+---
+description: Regras do Design System ZyraVision - garantir consistencia visual
+globs: "**/*.{vue,ts,css}"
+alwaysApply: false
+---
+
+# Design System — Regras Obrigatorias
+
+## Principio Central
+TODA tela deve usar SOMENTE componentes do Design System. Nenhum estilo avulso e permitido.
+
+## Documentacao Completa
+Consultar SEMPRE: `docs/cdd/design-system/` antes de criar qualquer componente ou tela.
+
+## Componentes Obrigatorios (prefixo Zy)
+
+### Formularios
+- `ZyButton` — Botoes (primary, secondary, danger, ghost, outline)
+- `ZyInput` — Campos de texto
+- `ZyTextarea` — Campos de texto multiline
+- `ZySelect` — Selects/dropdowns
+- `ZyCheckbox` / `ZySwitch` — Toggles
+
+### Dados e Listagens
+- `ZyTable` — Tabelas com paginacao e acoes
+- `ZyPagination` — Paginacao server-side
+- `ZyBadge` — Badges e status indicators
+
+### Containers
+- `ZyCard` — Cards
+- `ZyModal` — Modais
+- `ZyConfirmDialog` — Dialog de confirmacao destrutiva
+- `ZySlideOver` — Painel lateral deslizante
+- `ZyDropdown` — Menus dropdown
+
+### Feedback
+- `ZyAlert` — Alertas inline
+- `ZyToast` — Notificacoes flutuantes (via useToast)
+- `ZySkeleton` — Loading skeleton placeholders
+- `ZyEmptyState` — Estado vazio padronizado
+
+### Layout e Navegacao
+- `ZySidebar` — Navegacao lateral
+- `ZyHeader` — Cabecalho da aplicacao
+- `ZyBreadcrumb` — Navegacao hierarquica
+- `ZyPageHeader` — Titulo da pagina com acoes
+- `ZyAvatar` — Avatares de usuario
+
+## Regras Visuais
+- Cores SOMENTE do Design System tokens
+- Bordas: `rounded-lg` padrao
+- Espacamento: usar scale do Tailwind (4, 8, 12, 16, 24, 32)
+- Sombras: `shadow-sm`, `shadow`, `shadow-md` conforme hierarquia
+- Fontes: Inter como font-family principal
+
+## Tema
+- Suporte obrigatorio a Light e Dark mode
+- Usar classes `dark:` do Tailwind
+- Fundo light: `bg-gray-50` / Dark: `bg-gray-900`
+- Cards light: `bg-white` / Dark: `bg-gray-800`
+
+## Listagens/CRUD
+- TODAS as listagens usam `ZyTable`
+- Acoes padrao: visualizar, editar, excluir
+- Paginacao padrao em todas as tabelas
+- Filtros reutilizaveis
+- Empty state consistente
+- Loading skeleton
+
+## Acessibilidade (WCAG 2.1 AA)
+- TODOS os inputs devem ter label visivel
+- TODOS os botoes icon-only devem ter `aria-label`
+- Focus ring visivel em TODOS os elementos interativos
+- Contraste minimo 4.5:1 para texto, 3:1 para elementos grandes
+- Navegacao por teclado funcional em todos os componentes
+- `aria-hidden="true"` em icones decorativos
+- `role` e `aria-*` corretos em modais, dropdowns, tabs
+- Skip navigation link no layout
+
+## Proibicoes
+- PROIBIDO `<style>` customizado
+- PROIBIDO CSS inline (`style=""`)
+- PROIBIDO cores hardcoded (`#FF0000`, `rgb(...)`)
+- PROIBIDO criar componente que ja existe no DS
+- PROIBIDO alterar tokens sem atualizar docs
+- PROIBIDO remover focus ring de elementos interativos

@@ -1,0 +1,224 @@
+services:
+  # ─── Laravel PHP-FPM ─────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+      target: development
+    container_name: zyravision-app
+    restart: unless-stopped
+    volumes:
+      - .:/var/www/html
+      - ./docker/php/php.ini:/usr/local/etc/php/conf.d/custom.ini
+      - videodata:/recordings
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - frontend
+      - backend
+      - streaming
+    environment:
+      - PHP_OPCACHE_VALIDATE_TIMESTAMPS=1
+
+  # ─── Nginx Web Server ────────────────────────────────────────
+  web:
+    image: nginx:alpine
+    container_name: zyravision-web
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-8000}:80"
+    volumes:
+      - .:/var/www/html
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf
+    depends_on:
+      - app
+    networks:
+      - frontend
+      - streaming
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ─── PostgreSQL 15 ───────────────────────────────────────────
+  db:
+    image: postgres:15-alpine
+    container_name: zyravision-db
+    restart: unless-stopped
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: ${DB_DATABASE:-zyravision}
+      POSTGRES_USER: ${DB_USERNAME:-zyravision}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-secret}
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-zyravision}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─── Redis 7 ─────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: zyravision-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redisdata:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─── Laravel Queue Worker (Horizon) ──────────────────────────
+  queue:
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+      target: development
+    container_name: zyravision-queue
+    restart: unless-stopped
+    command: php artisan horizon
+    volumes:
+      - .:/var/www/html
+      - videodata:/recordings
+    depends_on:
+      - app
+      - redis
+    networks:
+      - backend
+      - streaming
+
+  # ─── Laravel Scheduler ───────────────────────────────────────
+  scheduler:
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+      target: development
+    container_name: zyravision-scheduler
+    restart: unless-stopped
+    user: root
+    command: >
+      sh -c "while true; do
+        chmod -R 777 /recordings 2>/dev/null;
+        php /var/www/html/artisan schedule:run --verbose --no-interaction;
+        sleep 60;
+      done"
+    volumes:
+      - .:/var/www/html
+      - videodata:/recordings
+    depends_on:
+      - app
+    networks:
+      - backend
+
+  # ─── Vite Dev Server (Development only) ──────────────────────
+  node:
+    image: node:20-alpine
+    container_name: zyravision-node
+    restart: unless-stopped
+    working_dir: /var/www/html
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    ports:
+      - "${VITE_PORT:-5173}:5173"
+    volumes:
+      - .:/var/www/html
+      - nodemodules:/var/www/html/node_modules
+    networks:
+      - frontend
+
+  # ─── MediaMTX (Streaming Server) ─────────────────────────────
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    container_name: zyravision-mediamtx
+    restart: unless-stopped
+    ports:
+      - "${MEDIAMTX_RTSP_PORT:-8554}:8554"
+      - "${MEDIAMTX_HLS_PORT:-8888}:8888"
+      - "${MEDIAMTX_WEBRTC_PORT:-8889}:8889"
+      - "${MEDIAMTX_API_PORT:-9997}:9997"
+    volumes:
+      - ./docker/mediamtx/mediamtx.yml:/mediamtx.yml
+      - videodata:/recordings
+    networks:
+      - backend
+      - streaming
+    healthcheck:
+      test: ["NONE"]
+
+  # ─── MinIO (S3-compatible Object Storage) ────────────────────
+  minio:
+    image: minio/minio:latest
+    container_name: zyravision-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - miniodata:/data
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ─── MeiliSearch ─────────────────────────────────────────────
+  meilisearch:
+    image: getmeili/meilisearch:latest
+    container_name: zyravision-meilisearch
+    restart: unless-stopped
+    ports:
+      - "${MEILISEARCH_PORT:-7700}:7700"
+    volumes:
+      - meilisearchdata:/meili_data
+    environment:
+      MEILI_MASTER_KEY: ${MEILISEARCH_KEY:-masterKey}
+      MEILI_NO_ANALYTICS: true
+    networks:
+      - backend
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:7700/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  pgdata:
+    driver: local
+  redisdata:
+    driver: local
+  nodemodules:
+    driver: local
+  meilisearchdata:
+    driver: local
+  videodata:
+    driver: local
+  miniodata:
+    driver: local
+
+networks:
+  frontend:
+    driver: bridge
+  backend:
+    driver: bridge
+  streaming:
+    driver: bridge

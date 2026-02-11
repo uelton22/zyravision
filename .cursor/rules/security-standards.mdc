@@ -1,0 +1,53 @@
+---
+description: Padroes de seguranca Zero Trust para o ZyraVision
+alwaysApply: true
+---
+
+# Security Standards — ZyraVision
+
+## Modelo Zero Trust
+- NUNCA confiar em dados do cliente
+- Validar TUDO server-side
+- Principio do menor privilegio
+
+## Autenticacao
+- Sanctum para autenticacao
+- Tokens com expiracao (24h mobile, 8h web)
+- Refresh token com rotacao
+- NUNCA armazenar senhas em texto plano (bcrypt)
+- Rate limiting em login: 5 tentativas / 15 min
+
+## Autorizacao (RBAC)
+- Policies Laravel para CADA recurso
+- SEMPRE verificar tenant_id nas queries
+- NUNCA expor dados cross-tenant
+- Roles: SuperAdmin, Admin, Operador, Visualizador
+
+## Validacao de Input
+- Form Requests OBRIGATORIOS em TODOS os endpoints
+- Sanitizar HTML
+- Validar URLs RTSP
+- Limitar tamanho de uploads
+
+## Dados Sensiveis
+- NUNCA logar senhas, tokens ou chaves
+- NUNCA retornar senha na API
+- Encriptar dados sensiveis em repouso (AES-256)
+- TLS 1.3 para transito
+
+## LGPD
+- Logs de acesso imutaveis
+- Direito ao esquecimento implementado
+- Consentimento rastreavel
+- Auditoria completa de acoes
+
+## Headers de Seguranca
+- CORS configurado por ambiente
+- CSP (Content Security Policy)
+- X-Frame-Options: DENY
+- X-Content-Type-Options: nosniff
+
+## Streams de Video
+- URLs de stream com token temporario
+- Expiracao de URLs HLS/DASH
+- Isolamento de streams por tenant

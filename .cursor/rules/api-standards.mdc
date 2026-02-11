@@ -1,0 +1,75 @@
+---
+description: Padroes de API REST para o ZyraVision (web e mobile)
+globs: "routes/api*.php,app/Http/Controllers/Api/**/*.php"
+alwaysApply: false
+---
+
+# API Standards — ZyraVision
+
+## Versionamento
+- Prefixo `/api/v1/` para todas as rotas
+- Versao no URL path, NAO em headers
+- Manter compatibilidade por 9 meses minimo
+
+## Nomenclatura
+- Recursos no plural: `/api/v1/cameras`, `/api/v1/streams`
+- Kebab-case para URLs: `/api/v1/storage-pools`
+- CamelCase para JSON response keys
+
+## Endpoints Padrao (CRUD)
+
+```
+GET    /api/v1/{resource}          # Listar (paginado)
+POST   /api/v1/{resource}          # Criar
+GET    /api/v1/{resource}/{id}     # Detalhe
+PUT    /api/v1/{resource}/{id}     # Atualizar
+DELETE /api/v1/{resource}/{id}     # Excluir
+```
+
+## Response Format
+
+```json
+{
+  "data": { ... },
+  "meta": {
+    "current_page": 1,
+    "per_page": 25,
+    "total": 100,
+    "last_page": 4
+  }
+}
+```
+
+## Autenticacao
+- Sanctum para web (cookie-based)
+- Sanctum tokens para mobile/API
+- Header: `Authorization: Bearer {token}`
+- Refresh token com rotacao
+
+## Rate Limiting
+- 60 req/min para autenticados
+- 20 req/min para nao autenticados
+- Headers: `X-RateLimit-Remaining`, `X-RateLimit-Limit`
+
+## Mobile API
+- Mesmos endpoints, mesma autenticacao
+- Campos opcionais para economia de dados: `?fields=id,name,status`
+- Suporte a `If-Modified-Since` para cache mobile
+- Push notifications via FCM/APNs
+
+## Erros Padrao
+
+| HTTP | Code | Uso |
+|------|------|-----|
+| 400 | VALIDATION_ERROR | Dados invalidos |
+| 401 | UNAUTHENTICATED | Token invalido |
+| 403 | FORBIDDEN | Sem permissao |
+| 404 | NOT_FOUND | Recurso inexistente |
+| 422 | UNPROCESSABLE | Regra de negocio violada |
+| 429 | RATE_LIMITED | Limite excedido |
+| 500 | INTERNAL_ERROR | Erro do servidor |
+
+## Tenant Scoping
+- TODOS os endpoints filtram por `tenant_id` automaticamente
+- Middleware `EnsureTenant` obrigatorio
+- NUNCA expor dados de outro tenant

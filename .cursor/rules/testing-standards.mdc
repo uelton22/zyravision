@@ -1,0 +1,68 @@
+---
+description: Padroes de testes e qualidade para o ZyraVision
+globs: "tests/**/*.php,**/*.test.ts,**/*.spec.ts"
+alwaysApply: false
+---
+
+# Testing Standards — ZyraVision
+
+## Framework de Testes
+- Backend: Pest PHP (NAO PHPUnit puro)
+- Frontend: Vitest para unit tests
+- E2E: Playwright
+
+## Piramide de Testes
+- 75% Unit Tests
+- 20% Integration/Feature Tests
+- 5% E2E Tests
+
+## Cobertura Minima
+- Backend: 80%
+- Frontend: 70%
+- Criticos (auth, billing, storage): 90%
+
+## Backend (Pest PHP)
+
+```php
+// Feature Test
+it('lista cameras do tenant autenticado', function () {
+    $user = User::factory()->create();
+    Camera::factory()->count(3)->for($user->tenant)->create();
+
+    actingAs($user)
+        ->getJson('/api/v1/cameras')
+        ->assertOk()
+        ->assertJsonCount(3, 'data');
+});
+
+// Unit Test
+it('calcula storage usado pelo tenant', function () {
+    $service = new StorageService();
+    $usage = $service->calculateUsage($tenant);
+
+    expect($usage)->toBeGreaterThan(0);
+});
+```
+
+## Frontend (Vitest)
+
+```typescript
+import { mount } from '@vue/test-utils'
+import ZyButton from '@/Components/UI/ZyButton.vue'
+
+test('renderiza botao primary', () => {
+  const wrapper = mount(ZyButton, {
+    props: { variant: 'primary' },
+    slots: { default: 'Salvar' }
+  })
+  expect(wrapper.text()).toBe('Salvar')
+  expect(wrapper.classes()).toContain('bg-primary-600')
+})
+```
+
+## Convencoes
+- Descrever em portugues o que o teste faz
+- Um assert por conceito
+- Factories para dados de teste
+- Database transactions em feature tests
+- Mock servicos externos (FFmpeg, S3)

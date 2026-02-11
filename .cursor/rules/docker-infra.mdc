@@ -1,0 +1,68 @@
+---
+description: Padroes de infraestrutura Docker e deploy para o ZyraVision
+globs: "**/Dockerfile,**/docker-compose*.yml,**/*.dockerfile"
+alwaysApply: false
+---
+
+# Docker & Infraestrutura — ZyraVision
+
+## Docker Compose (MVP)
+Servicos obrigatorios:
+- `app` — Laravel + PHP-FPM
+- `web` — Nginx
+- `db` — PostgreSQL 15
+- `redis` — Redis 7
+- `media` — MediaMTX + FFmpeg
+- `queue` — Laravel Horizon (worker)
+- `scheduler` — Laravel Scheduler
+
+## Imagens Base
+- PHP: `php:8.2-fpm-alpine`
+- Node: `node:20-alpine` (build)
+- Nginx: `nginx:alpine`
+- PostgreSQL: `postgres:15-alpine`
+- Redis: `redis:7-alpine`
+
+## Multi-stage Build
+
+```dockerfile
+# Build frontend
+FROM node:20-alpine AS frontend
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+# Build backend
+FROM php:8.2-fpm-alpine AS app
+# ... instalar extensoes
+COPY --from=frontend /app/public/build /app/public/build
+```
+
+## Volumes
+- `/storage/app` — uploads e cache
+- `/storage/recordings` — gravacoes de video
+- PostgreSQL data em volume nomeado
+- Redis data em volume nomeado
+
+## Redes
+- `frontend` — Nginx + App
+- `backend` — App + DB + Redis
+- `media` — App + MediaMTX + FFmpeg
+
+## GPU (quando disponivel)
+- Usar `nvidia-container-toolkit`
+- `deploy.resources.reservations.devices: [gpu]`
+- Container AI separado com acesso GPU
+
+## Health Checks
+- TODOS os servicos com healthcheck
+- Intervalo: 30s
+- Timeout: 10s
+- Retries: 3
+
+## Ambiente
+- `.env` para configuracao (NUNCA commitar)
+- `.env.example` com todas as variaveis documentadas
+- Secrets via Docker Secrets em producao
