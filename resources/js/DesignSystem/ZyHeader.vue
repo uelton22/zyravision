@@ -9,15 +9,24 @@ import ZyAvatar from './ZyAvatar.vue';
 import ZyDropdown from './ZyDropdown.vue';
 import { useTheme } from '../Composables/useTheme';
 
+interface DropdownItem {
+    label: string;
+    href?: string;
+    action?: () => void;
+    danger?: boolean;
+    divider?: boolean;
+}
+
 interface Props {
     user?: {
         name: string;
         email: string;
         avatar_url?: string;
     };
+    menuItems?: DropdownItem[];
 }
 
-defineProps<Props>();
+const props = defineProps<Props>();
 
 const emit = defineEmits<{
     'toggle-sidebar': [];
@@ -71,9 +80,8 @@ function logout() {
             <!-- User dropdown -->
             <ZyDropdown
                 v-if="user"
-                :items="[
+                :items="menuItems ?? [
                     { label: 'Meu Perfil', href: '/profile' },
-                    { label: 'Configurações', href: '/settings' },
                     { divider: true, label: '' },
                     { label: 'Sair', action: logout, danger: true },
                 ]"

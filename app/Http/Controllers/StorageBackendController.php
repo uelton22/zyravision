@@ -115,7 +115,13 @@ class StorageBackendController extends Controller
             'health_status' => StorageBackend::HEALTH_UNKNOWN,
         ]);
 
-        if ($validated['is_default'] ?? false) {
+        // If user wants it as default, or if it's the first backend for this scope → mark as default
+        $isFirstForScope = StorageBackend::query()
+            ->when($tenantId, fn ($q) => $q->where('tenant_id', $tenantId), fn ($q) => $q->whereNull('tenant_id'))
+            ->where('id', '!=', $backend->id)
+            ->count() === 0;
+
+        if (($validated['is_default'] ?? false) || $isFirstForScope) {
             $backend->markAsDefault();
         }
 
@@ -161,14 +167,16 @@ class StorageBackendController extends Controller
             'name' => $validated['name'],
             'driver' => $validated['driver'],
             'is_active' => $validated['is_active'] ?? true,
-            'is_default' => $wantsDefault,
             'priority' => $validated['priority'] ?? 0,
             'config' => $newConfig,
         ]);
 
-        // If marking as default, unset all others for the same tenant scope
+        // Use markAsDefault() to guarantee only one default per tenant scope
         if ($wantsDefault) {
             $backend->markAsDefault();
+        } elseif ($backend->is_default) {
+            // User explicitly unchecked default — remove flag
+            $backend->update(['is_default' => false]);
         }
 
         return redirect()->route('settings.storage.index')

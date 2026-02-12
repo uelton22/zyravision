@@ -73,6 +73,7 @@ class CameraController extends Controller
             'filters' => $request->only(['search', 'is_active', 'device_id', 'channel_type', 'tenant_id']),
             'tenants' => $tenants,
             'isSuperAdmin' => $isSuperAdmin,
+            'canManage' => $currentUser->hasRole(['admin', 'super-admin']),
         ]);
     }
 
@@ -215,7 +216,7 @@ class CameraController extends Controller
             ->with('success', 'Camera cadastrada com sucesso. O stream sera iniciado automaticamente.');
     }
 
-    public function show(Camera $camera): Response
+    public function show(Request $request, Camera $camera): Response
     {
         $this->authorizeForTenant($camera);
 
@@ -256,6 +257,7 @@ class CameraController extends Controller
             'streamUrls' => $streamUrls,
             'recentSegments' => $recentSegments,
             'segmentStats' => $segmentStats,
+            'canManage' => $request->user()->hasRole(['admin', 'super-admin']),
         ]);
     }
 

@@ -4,11 +4,12 @@ namespace App\Services\Storage\Drivers;
 
 use App\Models\StorageBackend;
 use Illuminate\Filesystem\FilesystemAdapter;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 
 /**
  * FTP/FTPS Storage Driver.
- * Uses Laravel's FTP filesystem adapter.
+ * Uses Laravel's FTP filesystem adapter with reconnection logic.
  */
 class FtpDriver extends AbstractDriver
 {
@@ -25,7 +26,9 @@ class FtpDriver extends AbstractDriver
             $this->getDisk()->files('/');
 
             return true;
-        } catch (\Throwable) {
+        } catch (\Throwable $e) {
+            Log::debug("FTP connect failed: {$e->getMessage()}");
+
             return false;
         }
     }
@@ -35,7 +38,14 @@ class FtpDriver extends AbstractDriver
         try {
             return $this->getDisk()->put($path, $contents);
         } catch (\Throwable) {
-            return false;
+            // Retry with fresh connection (stale connection fix)
+            $this->resetDisk();
+
+            try {
+                return $this->getDisk()->put($path, $contents);
+            } catch (\Throwable) {
+                return false;
+            }
         }
     }
 
@@ -51,7 +61,21 @@ class FtpDriver extends AbstractDriver
 
             return $result;
         } catch (\Throwable) {
-            return false;
+            // Retry with fresh connection (stale connection fix)
+            $this->resetDisk();
+
+            try {
+                $stream = fopen($localFilePath, 'rb');
+                if (! $stream) {
+                    return false;
+                }
+                $result = $this->getDisk()->writeStream($path, $stream);
+                fclose($stream);
+
+                return $result;
+            } catch (\Throwable) {
+                return false;
+            }
         }
     }
 
@@ -117,6 +141,9 @@ class FtpDriver extends AbstractDriver
 
     public function healthCheck(): array
     {
+        // Always use a fresh connection for health check to avoid stale connections
+        $this->resetDisk();
+
         $measurement = $this->measureLatency(function () {
             $disk = $this->getDisk();
             $testPath = '.health_check_' . uniqid();
@@ -127,10 +154,36 @@ class FtpDriver extends AbstractDriver
         });
 
         if ($measurement['result'] === false) {
+            $errorMsg = $measurement['error'] ?? 'Falha na conexao FTP';
+            Log::warning("FTP health check failed: {$errorMsg}", [
+                'host' => $this->getConfig('server'),
+                'port' => $this->getConfig('port', 21),
+            ]);
+
+            // Retry once with a completely fresh connection
+            $this->resetDisk();
+            sleep(1);
+
+            $retry = $this->measureLatency(function () {
+                $disk = $this->getDisk();
+                // Simpler test: just list root directory
+                $disk->files('/');
+
+                return true;
+            });
+
+            if ($retry['result'] !== false) {
+                return [
+                    'status' => StorageBackend::HEALTH_DEGRADED,
+                    'latency_ms' => $retry['latency_ms'],
+                    'message' => 'FTP instavel (escrita falhou, leitura OK)',
+                ];
+            }
+
             return [
                 'status' => StorageBackend::HEALTH_OFFLINE,
                 'latency_ms' => $measurement['latency_ms'],
-                'message' => $measurement['error'] ?? 'Falha na conexao FTP',
+                'message' => $errorMsg,
             ];
         }
 
@@ -139,6 +192,14 @@ class FtpDriver extends AbstractDriver
             'latency_ms' => $measurement['latency_ms'],
             'message' => 'FTP operando normalmente',
         ];
+    }
+
+    /**
+     * Reset the disk cache to force a fresh FTP connection.
+     */
+    private function resetDisk(): void
+    {
+        $this->disk = null;
     }
 
     private function getDisk(): FilesystemAdapter
@@ -156,7 +217,7 @@ class FtpDriver extends AbstractDriver
             'password' => $this->getConfig('password'),
             'ssl' => (bool) $this->getConfig('use_ssl', false),
             'passive' => (bool) $this->getConfig('passive_mode', true),
-            'timeout' => 30,
+            'timeout' => 15,
         ];
 
         $this->disk = Storage::build($config);

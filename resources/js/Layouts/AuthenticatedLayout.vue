@@ -3,8 +3,8 @@
  * AuthenticatedLayout — Layout principal da aplicação autenticada
  */
 
-import { ref, computed } from 'vue';
-import { usePage } from '@inertiajs/vue3';
+import { ref, computed, watch } from 'vue';
+import { usePage, router } from '@inertiajs/vue3';
 import { ZySidebar, ZyHeader, ZyToast } from '@design';
 import {
     HomeIcon,
@@ -30,6 +30,11 @@ import type { PageProps } from '@/Types';
 const page = usePage<PageProps>();
 const sidebarCollapsed = ref(false);
 const mobileSidebarOpen = ref(false);
+
+// Close mobile sidebar on navigation
+router.on('navigate', () => {
+    mobileSidebarOpen.value = false;
+});
 
 const userRoles = computed(() => {
     const roles = (page.props.auth?.user as any)?.roles;
@@ -101,33 +106,42 @@ const navigation = computed(() => {
         { label: 'Meu Perfil', href: '/profile', icon: UserIcon },
     );
 
-    // Configuracoes: admin + super-admin (settings.view)
-    if (isAdminOrSuper.value) {
-        const configChildren: any[] = [
-            { label: 'Gravacao', href: '/settings/recording', icon: VideoCameraIcon },
-        ];
-
-        // API Tokens: admin + super-admin
-        configChildren.push(
-            { label: 'Tokens de API', href: '/settings/api-tokens', icon: KeyIcon },
-            { label: 'Dispositivos', href: '/settings/devices', icon: DevicePhoneMobileIcon },
-            { label: 'Documentacao API', href: '/settings/api/docs', icon: BookOpenIcon },
-            { label: 'Workers', href: '/settings/workers', icon: CpuChipIcon },
-            { label: 'Sistema', href: '/settings/system', icon: WrenchScrewdriverIcon },
-        );
-
-        // Backends de armazenamento: super-admin only
-        if (isSuperAdmin.value) {
-            configChildren.push(
-                { label: 'Armazenamento', href: '/settings/storage', icon: CircleStackIcon },
-            );
-        }
-
+    // Configuracoes: super-admin only (configuracoes do sistema)
+    if (isSuperAdmin.value) {
         items.push({
             label: 'Configuracoes', href: '/settings/recording', icon: Cog6ToothIcon,
-            children: configChildren,
+            children: [
+                { label: 'Gravacao', href: '/settings/recording', icon: VideoCameraIcon },
+                { label: 'Tokens de API', href: '/settings/api-tokens', icon: KeyIcon },
+                { label: 'Dispositivos', href: '/settings/devices', icon: DevicePhoneMobileIcon },
+                { label: 'Documentacao API', href: '/settings/api/docs', icon: BookOpenIcon },
+                { label: 'Workers', href: '/settings/workers', icon: CpuChipIcon },
+                { label: 'Sistema', href: '/settings/system', icon: WrenchScrewdriverIcon },
+                { label: 'Armazenamento', href: '/settings/storage', icon: CircleStackIcon },
+            ],
         });
     }
+
+    return items;
+});
+
+function logout() {
+    router.post('/logout');
+}
+
+const headerMenuItems = computed(() => {
+    const items: any[] = [
+        { label: 'Meu Perfil', href: '/profile' },
+    ];
+
+    if (isSuperAdmin.value) {
+        items.push({ label: 'Configuracoes', href: '/settings/recording' });
+    }
+
+    items.push(
+        { divider: true, label: '' },
+        { label: 'Sair', action: logout, danger: true },
+    );
 
     return items;
 });
@@ -153,6 +167,7 @@ const navigation = computed(() => {
                     email: page.props.auth.user.email,
                     avatar_url: page.props.auth.user.avatar_url,
                 } : undefined"
+                :menu-items="headerMenuItems"
                 @toggle-sidebar="mobileSidebarOpen = !mobileSidebarOpen"
             />
 
@@ -164,7 +179,49 @@ const navigation = computed(() => {
             </main>
         </div>
 
+        <!-- Mobile Sidebar Overlay -->
+        <Teleport to="body">
+            <Transition name="zy-overlay">
+                <div
+                    v-if="mobileSidebarOpen"
+                    class="fixed inset-0 z-40 bg-black/50 lg:hidden"
+                    @click="mobileSidebarOpen = false"
+                />
+            </Transition>
+            <Transition name="zy-slide">
+                <div
+                    v-if="mobileSidebarOpen"
+                    class="fixed inset-y-0 left-0 z-50 w-64 lg:hidden"
+                >
+                    <ZySidebar
+                        :items="navigation"
+                        :collapsed="false"
+                    />
+                </div>
+            </Transition>
+        </Teleport>
+
         <!-- Toast notifications -->
         <ZyToast />
     </div>
 </template>
+
+<style scoped>
+.zy-overlay-enter-active,
+.zy-overlay-leave-active {
+    transition: opacity 0.3s ease;
+}
+.zy-overlay-enter-from,
+.zy-overlay-leave-to {
+    opacity: 0;
+}
+
+.zy-slide-enter-active,
+.zy-slide-leave-active {
+    transition: transform 0.3s ease;
+}
+.zy-slide-enter-from,
+.zy-slide-leave-to {
+    transform: translateX(-100%);
+}
+</style>

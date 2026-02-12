@@ -6,6 +6,7 @@ use App\Models\Camera;
 use App\Models\Recording;
 use App\Models\Stream;
 use App\Services\Camera\StreamUrlResolver;
+use App\Services\Recording\RecordingManager;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
@@ -14,6 +15,7 @@ class StreamManager
     public function __construct(
         private MediaMtxClient $mediaMtxClient,
         private StreamUrlResolver $streamUrlResolver,
+        private RecordingManager $recordingManager,
     ) {}
 
     /**
@@ -85,14 +87,17 @@ class StreamManager
         }
 
         // Enable continuous recording if configured.
-        // If the stream is ready now, enable recording immediately.
-        // If not ready yet, the MonitorStreamsJob will enable recording
-        // when the stream transitions to active.
+        // Uses RecordingManager to correctly handle quality settings (MediaMTX vs FFmpeg).
+        // If not ready yet, MonitorStreamsJob will enable recording when stream becomes active.
         if ($camera->continuous_recording) {
             if ($ready) {
-                $this->mediaMtxClient->editPath($path, ['record' => true]);
-                $camera->update(['is_recording' => true]);
-                Log::info("Gravacao continua habilitada para camera {$camera->id}.", ['path' => $path]);
+                try {
+                    $camera->load('activeStream');
+                    $this->recordingManager->startRecording($camera);
+                    Log::info("Gravacao continua habilitada para camera {$camera->id}.", ['path' => $path]);
+                } catch (\Throwable $e) {
+                    Log::warning("Falha ao iniciar gravacao continua para camera {$camera->id}: {$e->getMessage()}");
+                }
             } else {
                 Log::info("Gravacao continua pendente para camera {$camera->id} (stream ainda nao esta pronto — sera ativada pelo monitor).");
             }
@@ -115,13 +120,18 @@ class StreamManager
     {
         $camera = $stream->camera;
 
-        // If camera is recording, disable recording first
+        // If camera is recording, stop properly (handles both MediaMTX and FFmpeg)
         if ($camera && $camera->is_recording) {
-            $this->mediaMtxClient->editPath($stream->mediamtx_path, ['record' => false]);
-            Recording::forCamera($camera->id)
-                ->recording()
-                ->each(fn (Recording $r) => $r->markCompleted());
-            $camera->update(['is_recording' => false]);
+            try {
+                $this->recordingManager->stopRecording($camera);
+            } catch (\Throwable $e) {
+                Log::warning("Falha ao parar gravacao durante stop do stream: {$e->getMessage()}", [
+                    'camera_id' => $camera->id,
+                ]);
+                // Fallback: direct stop
+                $this->mediaMtxClient->editPath($stream->mediamtx_path, ['record' => false]);
+                $camera->update(['is_recording' => false]);
+            }
             Log::info("Recording stopped automatically when stream stopped.", [
                 'camera_id' => $camera->id,
             ]);
@@ -229,8 +239,20 @@ class StreamManager
 
             // Re-enable continuous recording if configured
             if ($camera->continuous_recording) {
-                $this->mediaMtxClient->editPath($path, ['record' => true]);
-                $camera->update(['is_recording' => true]);
+                try {
+                    // Finalize any stale recording from before the reset
+                    Recording::forCamera($camera->id)
+                        ->recording()
+                        ->each(fn (Recording $r) => $r->markCompleted());
+                    $camera->update(['is_recording' => false]);
+
+                    $camera->load('activeStream');
+                    $this->recordingManager->startRecording($camera);
+                } catch (\Throwable $e) {
+                    Log::warning("hardResetStream: falha ao reiniciar gravacao: {$e->getMessage()}", [
+                        'camera_id' => $camera->id,
+                    ]);
+                }
             }
 
             Log::info("hardResetStream: stream {$stream->id} recovered successfully via hard reset.");

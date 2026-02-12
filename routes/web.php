@@ -87,6 +87,16 @@ Route::middleware('auth')->group(function () {
         // Users CRUD
         Route::resource('users', UserController::class);
 
+        // Audit Log
+        Route::get('/audit', [AuditController::class, 'index'])->name('audit.index');
+    });
+
+    // ═══════════════════════════════════════════════════════
+    // ─── Super-admin only ────────────────────────────────
+    // ─── (configuracoes do sistema)                       ─
+    // ═══════════════════════════════════════════════════════
+
+    Route::middleware('role:super-admin')->group(function () {
         // Settings: Recording Configuration
         Route::prefix('settings/recording')->name('settings.recording.')->group(function () {
             Route::get('/', [\App\Http\Controllers\RecordingSettingsController::class, 'index'])->name('index');
@@ -114,9 +124,6 @@ Route::middleware('auth')->group(function () {
         // Settings: Workers Dashboard (monitoramento de workers)
         Route::get('/settings/workers', [\App\Http\Controllers\WorkerDashboardController::class, 'index'])->name('settings.workers.index');
         Route::get('/settings/workers/api', [\App\Http\Controllers\WorkerDashboardController::class, 'api'])->name('settings.workers.api');
-
-        // Audit Log
-        Route::get('/audit', [AuditController::class, 'index'])->name('audit.index');
     });
 
     // ═══════════════════════════════════════════════════════

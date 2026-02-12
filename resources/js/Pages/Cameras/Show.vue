@@ -46,6 +46,7 @@ interface Props {
     streamUrls?: StreamUrls;
     recentSegments?: RecentSegment[];
     segmentStats?: { total_count: number; total_size: number };
+    canManage?: boolean;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -58,6 +59,7 @@ const props = withDefaults(defineProps<Props>(), {
     }),
     recentSegments: () => [],
     segmentStats: () => ({ total_count: 0, total_size: 0 }),
+    canManage: false,
 });
 
 const showDeleteConfirm = ref(false);
@@ -355,7 +357,7 @@ onBeforeUnmount(() => {
     <ZyBreadcrumb :items="breadcrumbs" class="mb-4" />
 
     <ZyPageHeader :title="camera.name" description="Detalhes da camera">
-        <template #actions>
+        <template v-if="canManage" #actions>
             <ZyButton variant="secondary" :href="`/cameras/${camera.id}/edit`">
                 <PencilIcon class="h-5 w-5" />
                 Editar

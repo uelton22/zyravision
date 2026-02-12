@@ -53,11 +53,13 @@ interface Props {
     };
     tenants: { id: string; name: string }[];
     isSuperAdmin: boolean;
+    canManage: boolean;
 }
 
 const props = withDefaults(defineProps<Props>(), {
     tenants: () => [],
     isSuperAdmin: false,
+    canManage: false,
 });
 
 const search = ref(props.filters?.search || '');
@@ -152,8 +154,8 @@ function changePage(page: number) {
 
     <ZyBreadcrumb :items="breadcrumbs" class="mb-4" />
 
-    <ZyPageHeader title="Cameras" :description="isSuperAdmin ? 'Gerencie cameras de todas as empresas' : 'Gerencie as cameras da sua empresa'">
-        <template #actions>
+    <ZyPageHeader title="Cameras" :description="isSuperAdmin ? 'Gerencie cameras de todas as empresas' : 'Visualize as cameras da sua empresa'">
+        <template v-if="canManage" #actions>
             <ZyButton href="/cameras/create" variant="primary">
                 <PlusIcon class="h-5 w-5" />
                 Nova Camera
@@ -265,10 +267,10 @@ function changePage(page: number) {
                 <ZyButton variant="ghost" size="sm" :href="`/cameras/${(row as any).id}`" aria-label="Visualizar">
                     <EyeIcon class="h-4 w-4" />
                 </ZyButton>
-                <ZyButton variant="ghost" size="sm" :href="`/cameras/${(row as any).id}/edit`" aria-label="Editar">
+                <ZyButton v-if="canManage" variant="ghost" size="sm" :href="`/cameras/${(row as any).id}/edit`" aria-label="Editar">
                     <PencilIcon class="h-4 w-4" />
                 </ZyButton>
-                <ZyButton variant="ghost" size="sm" aria-label="Excluir" @click="confirmDelete(row as any)">
+                <ZyButton v-if="canManage" variant="ghost" size="sm" aria-label="Excluir" @click="confirmDelete(row as any)">
                     <TrashIcon class="h-4 w-4 text-danger-500" />
                 </ZyButton>
             </div>

@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use App\Models\Stream;
+use App\Services\Recording\RecordingManager;
 use App\Services\Streaming\MediaMtxClient;
 use App\Services\Streaming\StreamManager;
 use Illuminate\Bus\Queueable;
@@ -46,8 +47,12 @@ class MonitorStreamsJob implements ShouldQueue
         $this->onQueue('streaming');
     }
 
-    public function handle(MediaMtxClient $client, StreamManager $streamManager): void
+    private RecordingManager $recordingManager;
+
+    public function handle(MediaMtxClient $client, StreamManager $streamManager, RecordingManager $recordingManager): void
     {
+        $this->recordingManager = $recordingManager;
+
         // 1. Monitor running streams (starting, active, reconnecting)
         $this->monitorRunningStreams($client);
 
@@ -156,14 +161,15 @@ class MonitorStreamsJob implements ShouldQueue
 
             // When a stream transitions to active, ensure recording is enabled
             // if the camera has continuous_recording configured.
-            // This covers the case where recording couldn't start during stream
-            // creation (because stream wasn't ready yet).
+            // Uses RecordingManager to correctly handle quality settings (MediaMTX vs FFmpeg).
             $camera = $stream->camera;
             if ($camera && $camera->continuous_recording && ! $camera->is_recording) {
-                $recorded = $client->editPath($stream->mediamtx_path, ['record' => true]);
-                if ($recorded) {
-                    $camera->update(['is_recording' => true]);
+                try {
+                    $camera->load('activeStream');
+                    $this->recordingManager->startRecording($camera);
                     Log::info("MonitorStreamsJob: gravacao continua ativada para camera {$camera->id} (stream ficou ativo).");
+                } catch (\Throwable $e) {
+                    Log::warning("MonitorStreamsJob: falha ao iniciar gravacao para camera {$camera->id}: {$e->getMessage()}");
                 }
             }
         }

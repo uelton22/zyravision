@@ -30,7 +30,8 @@ RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
     zip \
     intl \
     opcache \
-    sockets
+    sockets \
+    ftp
 
 # Redis extension
 RUN pecl install redis && docker-php-ext-enable redis

@@ -202,11 +202,11 @@ class SegmentWatcherService
     {
         $backend = $this->resolveBackend($segment);
         if (! $backend) {
-            return false;
-        }
+            Log::debug('Nenhum storage backend remoto encontrado para upload.', [
+                'segment_id' => $segment->id,
+                'tenant_id' => $segment->tenant_id,
+            ]);
 
-        // Skip if backend is local (already there)
-        if ($backend->driver === StorageBackend::DRIVER_LOCAL) {
             return false;
         }
 
@@ -291,24 +291,19 @@ class SegmentWatcherService
     }
 
     /**
-     * Resolve storage backend for a segment.
+     * Resolve storage backend for a segment upload.
+     *
+     * Skips LOCAL backends since segments are already stored locally.
+     * Priority: 1) Tenant's default remote backend  2) Global default remote backend  3) Highest-priority active remote backend
      */
     private function resolveBackend(RecordingSegment $segment): ?StorageBackend
     {
-        // 1. Check tenant-specific settings
-        $settings = RecordingSetting::forTenant($segment->tenant_id);
-        if ($settings->default_storage_backend_id) {
-            $backend = StorageBackend::find($settings->default_storage_backend_id);
-            if ($backend && $backend->is_active) {
-                return $backend;
-            }
-        }
-
-        // 2. Tenant default backend
+        // 1. Tenant default backend (non-local, for upload)
         if ($segment->tenant_id) {
             $backend = StorageBackend::forTenant($segment->tenant_id)
                 ->active()
                 ->where('is_default', true)
+                ->where('driver', '!=', StorageBackend::DRIVER_LOCAL)
                 ->first();
 
             if ($backend) {
@@ -316,11 +311,27 @@ class SegmentWatcherService
             }
         }
 
-        // 3. Global default
-        return StorageBackend::whereNull('tenant_id')
+        // 2. Global default backend (non-local)
+        $backend = StorageBackend::whereNull('tenant_id')
             ->active()
             ->where('is_default', true)
+            ->where('driver', '!=', StorageBackend::DRIVER_LOCAL)
             ->first();
+
+        if ($backend) {
+            return $backend;
+        }
+
+        // 3. Fallback: highest-priority active non-local backend for this tenant
+        if ($segment->tenant_id) {
+            return StorageBackend::forTenant($segment->tenant_id)
+                ->active()
+                ->where('driver', '!=', StorageBackend::DRIVER_LOCAL)
+                ->orderBy('priority')
+                ->first();
+        }
+
+        return null;
     }
 
     /**

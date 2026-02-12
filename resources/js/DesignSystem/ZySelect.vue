@@ -35,6 +35,9 @@ const emit = defineEmits<{
 }>();
 
 const inputId = computed(() => props.id || `zy-select-${Math.random().toString(36).slice(2, 9)}`);
+
+// Hide placeholder when an option with empty value exists (avoids duplicate value="" conflict)
+const hasEmptyOption = computed(() => props.options.some((o) => o.value === '' || o.value === 0));
 </script>
 
 <template>
@@ -62,7 +65,7 @@ const inputId = computed(() => props.id || `zy-select-${Math.random().toString(3
             :aria-invalid="!!error"
             @change="emit('update:modelValue', ($event.target as HTMLSelectElement).value)"
         >
-            <option value="" disabled>{{ placeholder }}</option>
+            <option v-if="!hasEmptyOption" value="" disabled>{{ placeholder }}</option>
             <option
                 v-for="option in options"
                 :key="option.value"

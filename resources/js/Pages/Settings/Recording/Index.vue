@@ -1,26 +1,17 @@
 <script setup lang="ts">
 import { Head, useForm } from '@inertiajs/vue3';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
-import { ZyButton, ZyCard, ZySelect, ZyInput, ZySwitch, ZyBadge, ZyAlert, ZyBreadcrumb } from '@design';
+import { ZyButton, ZyCard, ZySelect, ZyInput, ZySwitch, ZyAlert, ZyBreadcrumb } from '@design';
 import { useToast } from '@/Composables/useToast';
 import {
     VideoCameraIcon,
     ClockIcon,
-    ServerIcon,
-    TrashIcon,
     CheckCircleIcon,
 } from '@heroicons/vue/24/outline';
 
 defineOptions({ layout: AuthenticatedLayout });
 
 const { addToast } = useToast();
-
-interface Backend {
-    id: string;
-    name: string;
-    driver: string;
-    is_default: boolean;
-}
 
 interface SelectOption {
     value: string | number;
@@ -34,11 +25,7 @@ interface Props {
         continuous_recording_default: boolean;
         retention_days: number;
         cleanup_local_after_upload: boolean;
-        recording_quality: string;
-        default_storage_backend_id: string | null;
     };
-    backends: Backend[];
-    qualityOptions: SelectOption[];
     segmentOptions: SelectOption[];
 }
 
@@ -55,17 +42,7 @@ const form = useForm({
     continuous_recording_default: props.settings.continuous_recording_default,
     retention_days: props.settings.retention_days,
     cleanup_local_after_upload: props.settings.cleanup_local_after_upload,
-    recording_quality: props.settings.recording_quality,
-    default_storage_backend_id: props.settings.default_storage_backend_id ?? '',
 });
-
-const backendOptions = [
-    { value: '', label: 'Usar padrao do tenant' },
-    ...props.backends.map((b) => ({
-        value: b.id,
-        label: `${b.name} (${b.driver})${b.is_default ? ' - Padrao' : ''}`,
-    })),
-];
 
 function submit() {
     // Transform types before sending (selects emit strings)
@@ -75,7 +52,6 @@ function submit() {
         retention_days: Number(data.retention_days),
         continuous_recording_default: Boolean(data.continuous_recording_default),
         cleanup_local_after_upload: Boolean(data.cleanup_local_after_upload),
-        default_storage_backend_id: data.default_storage_backend_id || null,
     })).put(route('settings.recording.update'), {
         preserveScroll: true,
         onSuccess: () => {
@@ -163,51 +139,12 @@ function submit() {
                     </div>
                 </ZyCard>
 
-                <!-- Armazenamento -->
-                <ZyCard>
-                    <template #header>
-                        <div class="flex items-center gap-2">
-                            <ServerIcon class="h-5 w-5 text-blue-400" />
-                            <h3 class="text-lg font-semibold text-white">Armazenamento</h3>
-                        </div>
-                    </template>
-
-                    <div class="space-y-4">
-                        <ZySelect
-                            v-model="form.default_storage_backend_id"
-                            :options="backendOptions"
-                            label="Backend de Armazenamento"
-                            hint="Onde os segmentos de gravacao serao armazenados. Ex: MinIO, S3, NFS."
-                            :error="form.errors.default_storage_backend_id"
-                        />
-
-                        <div class="flex items-center justify-between rounded-lg bg-slate-800/50 p-4">
-                            <div>
-                                <p class="font-medium text-white">Limpar arquivos locais apos upload</p>
-                                <p class="text-sm text-slate-400">
-                                    Remove os segmentos do disco local apos enviar ao storage remoto.
-                                    Economiza espaco em disco.
-                                </p>
-                            </div>
-                            <ZySwitch v-model="form.cleanup_local_after_upload" />
-                        </div>
-
-                        <ZySelect
-                            v-model="form.recording_quality"
-                            :options="qualityOptions"
-                            label="Qualidade de Gravacao"
-                            hint="'Original' grava sem transcodificacao (recomendado). Outras opcoes reduzem qualidade e uso de disco."
-                            :error="form.errors.recording_quality"
-                        />
-                    </div>
-                </ZyCard>
-
-                <!-- Retencao -->
+                <!-- Retencao e Armazenamento -->
                 <ZyCard>
                     <template #header>
                         <div class="flex items-center gap-2">
                             <ClockIcon class="h-5 w-5 text-amber-400" />
-                            <h3 class="text-lg font-semibold text-white">Retencao</h3>
+                            <h3 class="text-lg font-semibold text-white">Retencao e Armazenamento</h3>
                         </div>
                     </template>
 
@@ -228,6 +165,26 @@ function submit() {
                                 <strong class="text-white">
                                     {{ Math.round((500 * 24 * form.retention_days) / 1024) }} GB
                                 </strong> de armazenamento.
+                            </p>
+                        </div>
+
+                        <div class="flex items-center justify-between rounded-lg bg-slate-800/50 p-4">
+                            <div>
+                                <p class="font-medium text-white">Limpar arquivos locais apos upload</p>
+                                <p class="text-sm text-slate-400">
+                                    Remove os segmentos do disco local apos enviar ao storage backend padrao.
+                                    Economiza espaco em disco.
+                                </p>
+                            </div>
+                            <ZySwitch v-model="form.cleanup_local_after_upload" />
+                        </div>
+
+                        <div class="rounded-lg border border-slate-700 bg-slate-800/30 p-3">
+                            <p class="text-xs text-slate-400">
+                                <strong class="text-slate-300">Backend de armazenamento:</strong>
+                                O backend padrao e definido em
+                                <a href="/settings/storage" class="text-primary-400 hover:underline">Configuracoes → Armazenamento</a>.
+                                A qualidade de gravacao e configurada individualmente em cada camera.
                             </p>
                         </div>
                     </div>

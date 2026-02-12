@@ -4,6 +4,7 @@
  */
 
 import { Menu, MenuButton, MenuItem, MenuItems } from '@headlessui/vue';
+import { router } from '@inertiajs/vue3';
 
 interface DropdownItem {
     label: string;
@@ -66,7 +67,7 @@ withDefaults(defineProps<Props>(), {
                                         : 'text-dark-700 dark:text-dark-300',
                                 item.disabled ? 'opacity-50 cursor-not-allowed' : '',
                             ]"
-                            @click="item.action?.()"
+                            @click="item.action ? item.action() : item.href ? router.visit(item.href) : undefined"
                         >
                             <component v-if="item.icon" :is="item.icon" class="h-4 w-4 shrink-0" aria-hidden="true" />
                             {{ item.label }}
