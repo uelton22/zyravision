@@ -23,7 +23,11 @@ services:
     environment:
       - PHP_OPCACHE_VALIDATE_TIMESTAMPS=1
 
-  # ─── Nginx Web Server ────────────────────────────────────────
+  # ─── Nginx Web Server (Escalavel) ────────────────────────────
+  # Proxy HTTP + HLS + WebRTC. Stateless — facil de escalar.
+  # Escale via: WEB_REPLICAS=N no .env
+  # NOTA: Para WEB_REPLICAS > 1, remova o container_name e configure
+  #       um load balancer (traefik/haproxy) na frente.
   web:
     image: nginx:alpine
     container_name: zyravision-web
@@ -39,10 +43,18 @@ services:
       - frontend
       - streaming
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost/"]
+      test: ["CMD-SHELL", "curl -sf http://localhost:80/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 64M
 
   # ─── PostgreSQL 15 ───────────────────────────────────────────
   db:
@@ -83,13 +95,15 @@ services:
       timeout: 5s
       retries: 5
 
-  # ─── Laravel Queue Worker (Horizon) ──────────────────────────
+  # ─── Laravel Queue Worker (Horizon) — Escalavel ──────────────
+  # Processa jobs das filas: default, recordings, transcoding, notifications.
+  # Escale via: QUEUE_REPLICAS=N no .env
+  # Cada replica roda uma instancia do Horizon com seus supervisors.
   queue:
     build:
       context: .
       dockerfile: docker/php/Dockerfile
       target: development
-    container_name: zyravision-queue
     restart: unless-stopped
     command: php artisan horizon
     volumes:
@@ -101,6 +115,15 @@ services:
     networks:
       - backend
       - streaming
+    deploy:
+      replicas: ${QUEUE_REPLICAS:-1}
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
 
   # ─── Laravel Scheduler ───────────────────────────────────────
   scheduler:
@@ -140,6 +163,60 @@ services:
     networks:
       - frontend
 
+  # ─── Laravel Reverb (WebSocket Server) ───────────────────────
+  reverb:
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+      target: development
+    container_name: zyravision-reverb
+    restart: unless-stopped
+    command: php artisan reverb:start --host=0.0.0.0 --port=6001
+    ports:
+      - "${REVERB_PORT:-6001}:6001"
+    volumes:
+      - .:/var/www/html
+    depends_on:
+      - app
+      - redis
+    networks:
+      - frontend
+      - backend
+
+  # ─── FFmpeg Transcoder Worker (Escalavel) ─────────────────────
+  # Container dedicado para transcodificacao de video.
+  # Cada worker pode gerenciar ate FFMPEG_MAX_CONCURRENT cameras simultaneas.
+  # Escale via: TRANSCODER_REPLICAS=N no .env
+  # Para desativar (cameras usam MediaMTX nativo): TRANSCODER_REPLICAS=0
+  transcoder:
+    build:
+      context: .
+      dockerfile: docker/transcoder/Dockerfile
+    restart: unless-stopped
+    command: php artisan transcoder:worker --max-cameras=${FFMPEG_MAX_CONCURRENT:-10} --poll-interval=2 -v
+    volumes:
+      - .:/var/www/html
+      - videodata:/recordings
+    depends_on:
+      - redis
+      - mediamtx
+    networks:
+      - backend
+      - streaming
+    environment:
+      - FFMPEG_MAX_CONCURRENT=${FFMPEG_MAX_CONCURRENT:-10}
+      - FFMPEG_H264_PRESET=${FFMPEG_H264_PRESET:-fast}
+      - FFMPEG_LOG_LEVEL=${FFMPEG_LOG_LEVEL:-warning}
+    deploy:
+      replicas: ${TRANSCODER_REPLICAS:-1}
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 256M
+
   # ─── MediaMTX (Streaming Server) ─────────────────────────────
   mediamtx:
     image: bluenviron/mediamtx:latest
@@ -158,28 +235,6 @@ services:
       - streaming
     healthcheck:
       test: ["NONE"]
-
-  # ─── MinIO (S3-compatible Object Storage) ────────────────────
-  minio:
-    image: minio/minio:latest
-    container_name: zyravision-minio
-    restart: unless-stopped
-    command: server /data --console-address ":9001"
-    ports:
-      - "${MINIO_API_PORT:-9000}:9000"
-      - "${MINIO_CONSOLE_PORT:-9001}:9001"
-    volumes:
-      - miniodata:/data
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
-    networks:
-      - backend
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
 
   # ─── MeiliSearch ─────────────────────────────────────────────
   meilisearch:
@@ -211,8 +266,6 @@ volumes:
   meilisearchdata:
     driver: local
   videodata:
-    driver: local
-  miniodata:
     driver: local
 
 networks:

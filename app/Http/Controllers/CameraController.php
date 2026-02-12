@@ -136,6 +136,11 @@ class CameraController extends Controller
             'ddns_provider' => 'nullable|string|max:100',
             'ddns_hostname' => 'nullable|string|max:255',
             'ipv6_preferred' => 'boolean',
+            'recording_quality' => 'nullable|string|in:original,high,medium,low,custom',
+            'recording_resolution' => 'nullable|required_if:recording_quality,custom|string|in:3840x2160,2560x1440,1920x1080,1280x720,640x480,480x360',
+            'recording_codec' => 'nullable|required_if:recording_quality,custom|string|in:copy,h264,h265',
+            'recording_fps' => 'nullable|required_if:recording_quality,custom|integer|min:5|max:60',
+            'recording_bitrate' => 'nullable|required_if:recording_quality,custom|string|in:8M,6M,4M,2M,1M,512K',
         ];
 
         if ($isSuperAdmin) {
@@ -350,6 +355,11 @@ class CameraController extends Controller
             'ddns_provider' => 'nullable|string|max:100',
             'ddns_hostname' => 'nullable|string|max:255',
             'ipv6_preferred' => 'boolean',
+            'recording_quality' => 'nullable|string|in:original,high,medium,low,custom',
+            'recording_resolution' => 'nullable|required_if:recording_quality,custom|string|in:3840x2160,2560x1440,1920x1080,1280x720,640x480,480x360',
+            'recording_codec' => 'nullable|required_if:recording_quality,custom|string|in:copy,h264,h265',
+            'recording_fps' => 'nullable|required_if:recording_quality,custom|integer|min:5|max:60',
+            'recording_bitrate' => 'nullable|required_if:recording_quality,custom|string|in:8M,6M,4M,2M,1M,512K',
         ]);
 
         if (empty($validated['password'])) {

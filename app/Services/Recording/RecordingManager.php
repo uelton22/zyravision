@@ -2,12 +2,16 @@
 
 namespace App\Services\Recording;
 
+use App\Jobs\StartTranscodingJob;
+use App\Jobs\StopTranscodingJob;
 use App\Models\Camera;
 use App\Models\Recording;
+use App\Models\RecordingSegment;
 use App\Models\StorageBackend;
 use App\Models\Tenant;
 use App\Services\Storage\StorageBackendManager;
 use App\Services\Streaming\MediaMtxClient;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
 
@@ -51,23 +55,43 @@ class RecordingManager
 
         $path = $stream->mediamtx_path;
 
-        // Enable recording via MediaMTX API
-        // We only need to set record: true — MediaMTX uses the defaults from mediamtx.yml
-        // for recordPath, recordFormat, recordSegmentDuration.
-        // This keeps the architecture clean: 1 RTSP → MediaMTX → HLS + Recording
-        $success = $this->mediaMtxClient->editPath($path, [
-            'record' => true,
-        ]);
+        // Determine recording method based on quality setting
+        if ($camera->needsTranscoding()) {
+            // Route B: FFmpeg transcoding via worker dedicado (quality != original)
+            // Despacha job para fila 'transcoding' — worker container inicia FFmpeg
+            $recordingParams = $camera->getRecordingParams();
 
-        if (! $success) {
-            throw new \RuntimeException("Falha ao habilitar gravacao no MediaMTX para path '{$path}'.");
+            StartTranscodingJob::dispatch(
+                $camera->id,
+                $path,
+                $camera->getEffectiveRecordingQuality(),
+                $recordingParams,
+            );
+
+            Log::info("Gravacao via worker FFmpeg despachada para camera {$camera->id}.", [
+                'quality' => $camera->getEffectiveRecordingQuality(),
+                'params' => $recordingParams,
+            ]);
+        } else {
+            // Route A: MediaMTX native recording (passthrough, zero CPU cost)
+            $success = $this->mediaMtxClient->editPath($path, [
+                'record' => true,
+            ]);
+            if (! $success) {
+                throw new \RuntimeException("Falha ao habilitar gravacao no MediaMTX para path '{$path}'.");
+            }
+            $recordingParams = [
+                'codec' => $camera->codec ?? 'h264',
+                'resolution' => $camera->resolution,
+                'fps' => $camera->fps,
+            ];
         }
 
         // Resolve storage backend for this recording
         $storageBackend = $this->resolveStorageBackend($camera);
 
         // Create recording record
-        // Storage path matches MediaMTX recordPath default: /recordings/{path}/
+        // Storage path matches both MediaMTX recordPath and FFmpeg output: /recordings/{path}/
         $recording = Recording::create([
             'camera_id' => $camera->id,
             'tenant_id' => $camera->tenant_id,
@@ -76,9 +100,9 @@ class RecordingManager
             'status' => Recording::STATUS_RECORDING,
             'storage_path' => config('streaming.recording.base_path', '/recordings') . "/{$path}",
             'started_at' => now(),
-            'codec' => $camera->codec ?? 'h264',
-            'resolution' => $camera->resolution,
-            'fps' => $camera->fps,
+            'codec' => $recordingParams['codec'] ?? $camera->codec ?? 'h264',
+            'resolution' => $recordingParams['resolution'] ?? $camera->resolution,
+            'fps' => $recordingParams['fps'] ?? $camera->fps,
         ]);
 
         $camera->update(['is_recording' => true]);
@@ -86,6 +110,7 @@ class RecordingManager
         Log::info("Gravacao iniciada para camera {$camera->id}.", [
             'recording_id' => $recording->id,
             'path' => $path,
+            'method' => $camera->needsTranscoding() ? 'ffmpeg_worker' : 'mediamtx',
         ]);
 
         return $recording;
@@ -100,11 +125,27 @@ class RecordingManager
         $camera->load(['activeStream', 'latestStream']);
         $stream = $camera->activeStream ?? $camera->latestStream;
 
+        // Stop FFmpeg transcoder via worker (despacha comando de parada)
+        if ($this->isTranscodingActive($camera->id)) {
+            StopTranscodingJob::dispatch($camera->id);
+        }
+
         // Disable recording in MediaMTX
         if ($stream && $stream->mediamtx_path) {
             $this->mediaMtxClient->editPath($stream->mediamtx_path, [
                 'record' => false,
             ]);
+        }
+
+        // Finalize any segments still in 'writing' status for this camera.
+        // When recording stops, the last segment has ends_at=null and duration=0.
+        // We must close it properly using the file's modification time.
+        $writingSegments = RecordingSegment::forCamera($camera->id)
+            ->where('status', RecordingSegment::STATUS_WRITING)
+            ->get();
+
+        foreach ($writingSegments as $segment) {
+            $this->finalizeWritingSegment($segment);
         }
 
         // Mark active recordings as completed
@@ -116,6 +157,51 @@ class RecordingManager
         $camera->update(['is_recording' => false]);
 
         Log::info("Gravacao parada para camera {$camera->id}.");
+    }
+
+    /**
+     * Finalize a segment that is still in 'writing' status.
+     * Uses the file's modification time as the best estimate for ends_at,
+     * instead of now() which would include all idle time after recording stopped.
+     */
+    private function finalizeWritingSegment(RecordingSegment $segment): void
+    {
+        $endsAt = now();
+        $duration = 0;
+
+        // Try to get accurate end time from the actual file's modification time
+        if ($segment->local_path && File::exists($segment->local_path)) {
+            $fileMtime = File::lastModified($segment->local_path);
+            $endsAt = \Carbon\Carbon::createFromTimestamp($fileMtime);
+        }
+
+        if ($segment->starts_at) {
+            $duration = (int) $segment->starts_at->diffInSeconds($endsAt);
+
+            // Safety cap: a single segment should never exceed 10 minutes
+            $maxDuration = 600;
+            if ($duration > $maxDuration) {
+                $duration = $maxDuration;
+                $endsAt = $segment->starts_at->copy()->addSeconds($maxDuration);
+            }
+        }
+
+        $fileSize = $segment->file_size_bytes;
+        if ($segment->local_path && File::exists($segment->local_path)) {
+            $fileSize = File::size($segment->local_path);
+        }
+
+        $segment->update([
+            'status' => RecordingSegment::STATUS_READY,
+            'ends_at' => $endsAt,
+            'duration_seconds' => $duration,
+            'file_size_bytes' => $fileSize ?: $segment->file_size_bytes,
+        ]);
+
+        Log::debug("Segmento writing finalizado: {$segment->id}", [
+            'duration' => $duration,
+            'ends_at' => $endsAt->toIso8601String(),
+        ]);
     }
 
     /**
@@ -436,6 +522,21 @@ class RecordingManager
     public function isRecording(Camera $camera): bool
     {
         return $camera->is_recording && Recording::forCamera($camera->id)->recording()->exists();
+    }
+
+    /**
+     * Check if a camera has an active transcoding process via Redis.
+     * Consulta o status registrado pelos workers transcoder no Redis.
+     */
+    public function isTranscodingActive(string $cameraId): bool
+    {
+        $data = Cache::get("transcoding:cameras:{$cameraId}");
+
+        if (! $data) {
+            return false;
+        }
+
+        return in_array($data['status'] ?? '', ['pending', 'running']);
     }
 
     /**

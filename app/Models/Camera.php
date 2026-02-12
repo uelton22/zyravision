@@ -33,6 +33,7 @@ class Camera extends Model
         'last_resolved_ip', 'last_resolved_at',
         'has_ptz', 'has_audio',
         'is_active', 'is_online', 'is_recording', 'continuous_recording', 'last_seen_at',
+        'recording_quality', 'recording_resolution', 'recording_codec', 'recording_fps', 'recording_bitrate',
         'location', 'description', 'snapshot_url', 'metadata',
     ];
 
@@ -46,6 +47,7 @@ class Camera extends Model
         'is_online' => 'boolean',
         'is_recording' => 'boolean',
         'continuous_recording' => 'boolean',
+        'recording_fps' => 'integer',
         'ipv6_preferred' => 'boolean',
         'last_seen_at' => 'datetime',
         'last_resolved_at' => 'datetime',
@@ -146,6 +148,73 @@ class Camera extends Model
     public function getEffectivePort(): int
     {
         return $this->port ?? $this->device?->port ?? 554;
+    }
+
+    // ─── Recording Quality ──────────────────────────────
+
+    const QUALITY_PRESETS = [
+        'original' => ['resolution' => null, 'codec' => 'copy', 'fps' => null, 'bitrate' => null],
+        'high'     => ['resolution' => '1920x1080', 'codec' => 'h264', 'fps' => 30, 'bitrate' => '4M'],
+        'medium'   => ['resolution' => '1280x720', 'codec' => 'h264', 'fps' => 15, 'bitrate' => '2M'],
+        'low'      => ['resolution' => '640x480', 'codec' => 'h264', 'fps' => 10, 'bitrate' => '1M'],
+    ];
+
+    /**
+     * Get the effective recording quality, considering per-camera override and tenant defaults.
+     */
+    public function getEffectiveRecordingQuality(): string
+    {
+        if ($this->recording_quality) {
+            return $this->recording_quality;
+        }
+
+        $settings = RecordingSetting::forTenant($this->tenant_id);
+
+        return $settings->recording_quality ?? 'original';
+    }
+
+    /**
+     * Whether this camera needs FFmpeg transcoding (quality != original).
+     */
+    public function needsTranscoding(): bool
+    {
+        return $this->getEffectiveRecordingQuality() !== 'original';
+    }
+
+    /**
+     * Get the resolved recording parameters (resolution, codec, fps, bitrate).
+     */
+    public function getRecordingParams(): array
+    {
+        $quality = $this->getEffectiveRecordingQuality();
+
+        if ($quality === 'original') {
+            return [
+                'resolution' => $this->resolution,
+                'codec' => $this->codec ?? 'h264',
+                'fps' => $this->fps,
+                'bitrate' => null,
+            ];
+        }
+
+        if ($quality === 'custom') {
+            return [
+                'resolution' => $this->recording_resolution ?? '1280x720',
+                'codec' => $this->recording_codec ?? 'h264',
+                'fps' => $this->recording_fps ?? 15,
+                'bitrate' => $this->recording_bitrate ?? '2M',
+            ];
+        }
+
+        // Named preset (high, medium, low)
+        $preset = self::QUALITY_PRESETS[$quality] ?? self::QUALITY_PRESETS['medium'];
+
+        return [
+            'resolution' => $preset['resolution'],
+            'codec' => $preset['codec'],
+            'fps' => $preset['fps'],
+            'bitrate' => $preset['bitrate'],
+        ];
     }
 
     public static function generateSlug(string $name, string $tenantId): string

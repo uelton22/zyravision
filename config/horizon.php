@@ -197,33 +197,100 @@ return [
     */
 
     'defaults' => [
-        'supervisor-1' => [
+        // Jobs gerais: notificacoes, emails, cache, etc.
+        'supervisor-default' => [
             'connection' => 'redis',
-            'queue' => ['default', 'streaming'],
+            'queue' => ['default'],
             'balance' => 'auto',
             'autoScalingStrategy' => 'time',
-            'maxProcesses' => 1,
+            'maxProcesses' => 3,
             'maxTime' => 0,
             'maxJobs' => 0,
             'memory' => 128,
-            'tries' => 1,
+            'tries' => 3,
             'timeout' => 60,
+            'nice' => 0,
+        ],
+
+        // Jobs de gravacao: scan de segmentos, upload storage, cleanup
+        'supervisor-recordings' => [
+            'connection' => 'redis',
+            'queue' => ['recordings', 'streaming'],
+            'balance' => 'auto',
+            'autoScalingStrategy' => 'time',
+            'maxProcesses' => 4,
+            'maxTime' => 0,
+            'maxJobs' => 0,
+            'memory' => 256,
+            'tries' => 3,
+            'timeout' => 300,
+            'nice' => 0,
+        ],
+
+        // Jobs de transcodificacao: start/stop comandos para workers FFmpeg
+        // Estes jobs sao leves (apenas registram comandos no Redis),
+        // o trabalho pesado roda no container transcoder
+        'supervisor-transcoding' => [
+            'connection' => 'redis',
+            'queue' => ['transcoding'],
+            'balance' => 'simple',
+            'maxProcesses' => 1,
+            'maxTime' => 0,
+            'maxJobs' => 0,
+            'memory' => 64,
+            'tries' => 3,
+            'timeout' => 30,
+            'nice' => 0,
+        ],
+
+        // Jobs de notificacoes: push, websocket broadcasts
+        'supervisor-notifications' => [
+            'connection' => 'redis',
+            'queue' => ['notifications'],
+            'balance' => 'auto',
+            'autoScalingStrategy' => 'time',
+            'maxProcesses' => 2,
+            'maxTime' => 0,
+            'maxJobs' => 0,
+            'memory' => 64,
+            'tries' => 3,
+            'timeout' => 30,
             'nice' => 0,
         ],
     ],
 
     'environments' => [
         'production' => [
-            'supervisor-1' => [
-                'maxProcesses' => 10,
+            'supervisor-default' => [
+                'maxProcesses' => 5,
                 'balanceMaxShift' => 1,
                 'balanceCooldown' => 3,
+            ],
+            'supervisor-recordings' => [
+                'maxProcesses' => 8,
+                'balanceMaxShift' => 2,
+                'balanceCooldown' => 3,
+            ],
+            'supervisor-transcoding' => [
+                'maxProcesses' => 2,
+            ],
+            'supervisor-notifications' => [
+                'maxProcesses' => 4,
             ],
         ],
 
         'local' => [
-            'supervisor-1' => [
-                'maxProcesses' => 3,
+            'supervisor-default' => [
+                'maxProcesses' => 2,
+            ],
+            'supervisor-recordings' => [
+                'maxProcesses' => 2,
+            ],
+            'supervisor-transcoding' => [
+                'maxProcesses' => 1,
+            ],
+            'supervisor-notifications' => [
+                'maxProcesses' => 1,
             ],
         ],
     ],

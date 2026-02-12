@@ -18,6 +18,8 @@ use App\Http\Controllers\RecordingController;
 use App\Http\Controllers\StorageController;
 use App\Http\Controllers\StorageBackendController;
 use App\Http\Controllers\AnalyticsController;
+use App\Http\Controllers\ApiTokenController;
+use App\Http\Controllers\UserDeviceController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -90,6 +92,28 @@ Route::middleware('auth')->group(function () {
             Route::get('/', [\App\Http\Controllers\RecordingSettingsController::class, 'index'])->name('index');
             Route::put('/', [\App\Http\Controllers\RecordingSettingsController::class, 'update'])->name('update');
         });
+
+        // Settings: API Tokens
+        Route::get('/settings/api-tokens', [ApiTokenController::class, 'index'])->name('settings.api-tokens.index');
+        Route::post('/settings/api-tokens', [ApiTokenController::class, 'store'])->name('settings.api-tokens.store');
+        Route::delete('/settings/api-tokens/{token}', [ApiTokenController::class, 'destroy'])->name('settings.api-tokens.destroy');
+
+        // Settings: API Documentation
+        Route::get('/settings/api/docs', [\App\Http\Controllers\ApiDocController::class, 'index'])->name('settings.api-docs.index');
+
+        // Settings: Connected Devices
+        Route::get('/settings/devices', [UserDeviceController::class, 'index'])->name('settings.devices.index');
+        Route::put('/settings/devices/{device}/revoke', [UserDeviceController::class, 'revoke'])->name('settings.devices.revoke');
+        Route::delete('/settings/devices/{device}', [UserDeviceController::class, 'destroy'])->name('settings.devices.destroy');
+
+        // Settings: System Maintenance (cache clearing)
+        Route::get('/settings/system', [\App\Http\Controllers\SystemSettingsController::class, 'index'])->name('settings.system.index');
+        Route::post('/settings/system/clear-segment-cache', [\App\Http\Controllers\SystemSettingsController::class, 'clearSegmentCache'])->name('settings.system.clear-segment-cache');
+        Route::post('/settings/system/clear-app-cache', [\App\Http\Controllers\SystemSettingsController::class, 'clearAppCache'])->name('settings.system.clear-app-cache');
+
+        // Settings: Workers Dashboard (monitoramento de workers)
+        Route::get('/settings/workers', [\App\Http\Controllers\WorkerDashboardController::class, 'index'])->name('settings.workers.index');
+        Route::get('/settings/workers/api', [\App\Http\Controllers\WorkerDashboardController::class, 'api'])->name('settings.workers.api');
 
         // Audit Log
         Route::get('/audit', [AuditController::class, 'index'])->name('audit.index');

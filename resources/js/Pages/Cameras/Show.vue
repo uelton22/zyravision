@@ -278,6 +278,26 @@ function formatDate(dateStr: string | null): string {
     });
 }
 
+const qualityLabels: Record<string, string> = {
+    original: 'Original (passthrough)',
+    high: 'Alta (1080p)',
+    medium: 'Media (720p)',
+    low: 'Baixa (480p)',
+    custom: 'Personalizado',
+};
+
+function getRecordingQualityLabel(): string {
+    const q = (props.camera as any).recording_quality;
+    if (!q) return 'Padrao global';
+    return qualityLabels[q] || q;
+}
+
+function getRecordingMethod(): string {
+    const q = (props.camera as any).recording_quality;
+    if (!q || q === 'original') return 'MediaMTX (passthrough)';
+    return 'FFmpeg (transcodificacao)';
+}
+
 const segmentStatusLabels: Record<string, string> = {
     ready: 'Pronto',
     uploaded: 'Na Nuvem',
@@ -557,6 +577,17 @@ onBeforeUnmount(() => {
                         <ZyBadge :variant="isRecording ? 'danger' : 'secondary'" dot>
                             {{ isRecording ? 'Gravando' : 'Parado' }}
                         </ZyBadge>
+                    </div>
+                    <hr class="border-dark-200 dark:border-dark-700" />
+                    <div class="flex items-center justify-between">
+                        <span class="text-body-sm text-dark-500">Qualidade gravacao</span>
+                        <ZyBadge :variant="(camera as any).recording_quality && (camera as any).recording_quality !== 'original' ? 'info' : 'secondary'">
+                            {{ getRecordingQualityLabel() }}
+                        </ZyBadge>
+                    </div>
+                    <div class="flex items-center justify-between">
+                        <span class="text-body-sm text-dark-500">Metodo</span>
+                        <span class="text-body-sm text-[var(--zy-text-primary)]">{{ getRecordingMethod() }}</span>
                     </div>
                 </div>
             </ZyCard>

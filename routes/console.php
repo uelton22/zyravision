@@ -37,6 +37,10 @@ Schedule::job(new CleanupExpiredRecordingsJob)->dailyAt('03:00')->name('cleanup-
 Schedule::job(new \App\Jobs\CleanupExpiredSegmentsJob)->dailyAt('03:30')->name('cleanup-expired-segments');
 Schedule::job(new UpdateStorageQuotaJob)->everyFifteenMinutes()->name('update-storage-quotas');
 
+// ─── Transcoder Cleanup ─────────────────────────────────
+
+Schedule::command('transcoder:cleanup')->everyFiveMinutes()->name('transcoder-cleanup');
+
 // ─── Storage Backend Health Checks ──────────────────────
 
 Schedule::job(new CheckStorageBackendHealthJob)->everyFiveMinutes()->name('check-storage-backend-health');

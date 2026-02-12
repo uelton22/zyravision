@@ -254,11 +254,47 @@ export interface PaginatedResponse<T> {
     };
 }
 
+export interface ApiToken {
+    id: string;
+    name: string;
+    abilities: string[];
+    last_used_at: string | null;
+    expires_at: string | null;
+    created_at: string;
+}
+
+export type ApiTokenAbility =
+    | 'cameras:read' | 'cameras:write' | 'cameras:delete'
+    | 'devices:read' | 'devices:write' | 'devices:delete'
+    | 'streams:read' | 'streams:write'
+    | 'recordings:read' | 'recordings:write' | 'recordings:download' | 'recordings:delete'
+    | 'storage:read' | 'storage:write'
+    | 'users:read' | 'users:write'
+    | 'profile:read' | 'profile:write'
+    | 'mobile:dashboard' | 'mobile:sync'
+    | 'admin:*';
+
+export interface UserDevice {
+    id: string;
+    device_id: string;
+    device_name: string;
+    platform: 'ios' | 'android' | 'web';
+    app_version: string | null;
+    os_version: string | null;
+    is_active: boolean;
+    has_push_token: boolean;
+    push_provider: 'fcm' | 'apns' | null;
+    last_active_at: string | null;
+    revoked_at: string | null;
+    created_at: string;
+}
+
 export interface Flash {
     success?: string;
     error?: string;
     warning?: string;
     info?: string;
+    newToken?: string;
 }
 
 export type PageProps<

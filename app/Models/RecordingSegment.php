@@ -130,15 +130,28 @@ class RecordingSegment extends Model
         return (bool) $this->remote_path;
     }
 
-    public function markReady(int $fileSize = 0, ?int $durationSeconds = null): void
+    public function markReady(int $fileSize = 0, ?int $durationSeconds = null, ?\Carbon\Carbon $endsAt = null): void
     {
+        $resolvedEndsAt = $endsAt ?? now();
+        $resolvedDuration = $durationSeconds ?? (
+            $this->starts_at ? (int) $this->starts_at->diffInSeconds($resolvedEndsAt) : 0
+        );
+
+        // Safety cap: a single segment should never exceed 10 minutes.
+        // If it does, the duration was likely miscalculated (e.g., using now() after a long pause).
+        $maxDuration = 600;
+        if ($resolvedDuration > $maxDuration) {
+            $resolvedDuration = $maxDuration;
+            $resolvedEndsAt = $this->starts_at
+                ? $this->starts_at->copy()->addSeconds($maxDuration)
+                : $resolvedEndsAt;
+        }
+
         $this->update([
             'status' => self::STATUS_READY,
             'file_size_bytes' => $fileSize ?: $this->file_size_bytes,
-            'ends_at' => now(),
-            'duration_seconds' => $durationSeconds ?? (
-                $this->starts_at ? (int) $this->starts_at->diffInSeconds(now()) : 0
-            ),
+            'ends_at' => $resolvedEndsAt,
+            'duration_seconds' => $resolvedDuration,
         ]);
     }
 

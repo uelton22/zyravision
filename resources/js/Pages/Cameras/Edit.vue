@@ -6,7 +6,8 @@
 import { ref, computed, watch } from 'vue';
 import { Head, useForm } from '@inertiajs/vue3';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
-import { ZyPageHeader, ZyBreadcrumb, ZyCard, ZyButton, ZyInput, ZySelect, ZySwitch, ZyTextarea } from '@design';
+import { ZyPageHeader, ZyBreadcrumb, ZyCard, ZyButton, ZyInput, ZySelect, ZySwitch, ZyAlert, ZyTextarea } from '@design';
+import { FilmIcon } from '@heroicons/vue/24/outline';
 import type { Camera } from '@/Types';
 
 defineOptions({ layout: AuthenticatedLayout });
@@ -60,6 +61,11 @@ const form = useForm({
     ddns_provider: props.camera.ddns_provider || '',
     ddns_hostname: props.camera.ddns_hostname || '',
     ipv6_preferred: props.camera.ipv6_preferred,
+    recording_quality: (props.camera as any).recording_quality || '',
+    recording_resolution: (props.camera as any).recording_resolution || '',
+    recording_codec: (props.camera as any).recording_codec || '',
+    recording_fps: (props.camera as any).recording_fps || null,
+    recording_bitrate: (props.camera as any).recording_bitrate || '',
 });
 
 // RTSP path templates by manufacturer
@@ -122,6 +128,41 @@ const deviceOptions = props.devices.map((d) => ({
     value: d.id,
     label: `${d.name} (${d.manufacturer} - ${d.total_channels} canais)`,
 }));
+
+const recordingQualityOptions = [
+    { value: '', label: 'Usar padrao global' },
+    { value: 'original', label: 'Original (sem transcodificacao)' },
+    { value: 'high', label: 'Alta (1080p, H.264, 30fps, 4Mbps)' },
+    { value: 'medium', label: 'Media (720p, H.264, 15fps, 2Mbps)' },
+    { value: 'low', label: 'Baixa (480p, H.264, 10fps, 1Mbps)' },
+    { value: 'custom', label: 'Personalizado' },
+];
+
+const recordingResolutionOptions = [
+    { value: '3840x2160', label: '4K (3840x2160)' },
+    { value: '2560x1440', label: '2K (2560x1440)' },
+    { value: '1920x1080', label: 'Full HD (1920x1080)' },
+    { value: '1280x720', label: 'HD (1280x720)' },
+    { value: '640x480', label: '480p (640x480)' },
+    { value: '480x360', label: '360p (480x360)' },
+];
+
+const recordingCodecOptions = [
+    { value: 'h264', label: 'H.264 (AVC)' },
+    { value: 'h265', label: 'H.265 (HEVC)' },
+    { value: 'copy', label: 'Copy (sem recodificar)' },
+];
+
+const recordingBitrateOptions = [
+    { value: '8M', label: '8 Mbps' },
+    { value: '6M', label: '6 Mbps' },
+    { value: '4M', label: '4 Mbps' },
+    { value: '2M', label: '2 Mbps' },
+    { value: '1M', label: '1 Mbps' },
+    { value: '512K', label: '512 Kbps' },
+];
+
+const showCustomQuality = computed(() => form.recording_quality === 'custom');
 
 const selectedDevice = computed(() => {
     return props.devices.find(d => d.id === form.device_id) || null;
@@ -259,6 +300,75 @@ function submit() {
             <div class="grid sm:grid-cols-2 gap-4 max-w-lg">
                 <ZyInput v-model="form.username" label="Usuario" :error="form.errors.username" />
                 <ZyInput v-model="form.password" type="password" label="Senha" placeholder="Deixe vazio para manter a atual" :error="form.errors.password" />
+            </div>
+        </ZyCard>
+
+        <!-- Recording Quality -->
+        <ZyCard>
+            <template #header>
+                <div class="flex items-center gap-2">
+                    <FilmIcon class="h-5 w-5 text-indigo-400" />
+                    <h3 class="text-heading-sm font-semibold text-[var(--zy-text-primary)]">Qualidade de Gravacao</h3>
+                </div>
+            </template>
+            <div class="space-y-4">
+                <ZySelect
+                    v-model="form.recording_quality"
+                    :options="recordingQualityOptions"
+                    label="Qualidade da gravacao"
+                    :error="form.errors.recording_quality"
+                    description="Define a resolucao e codec usados para gravar. 'Original' grava sem transcodificacao (menor uso de CPU)."
+                />
+
+                <ZyAlert v-if="form.recording_quality === '' || form.recording_quality === 'original'" variant="info">
+                    A gravacao sera feita sem transcodificacao (passthrough). Usa menos CPU mas mantem a resolucao original da camera.
+                </ZyAlert>
+
+                <ZyAlert v-else-if="form.recording_quality !== 'custom'" variant="warning">
+                    A gravacao sera transcodificada via FFmpeg. Isso consome CPU adicional no servidor.
+                </ZyAlert>
+
+                <!-- Custom Quality Fields -->
+                <template v-if="showCustomQuality">
+                    <ZyAlert variant="warning">
+                        Modo personalizado: a gravacao sera transcodificada via FFmpeg com os parametros abaixo. Isso consome CPU adicional.
+                    </ZyAlert>
+
+                    <div class="grid sm:grid-cols-2 gap-4">
+                        <ZySelect
+                            v-model="form.recording_resolution"
+                            :options="recordingResolutionOptions"
+                            label="Resolucao"
+                            :error="form.errors.recording_resolution"
+                            required
+                        />
+                        <ZySelect
+                            v-model="form.recording_codec"
+                            :options="recordingCodecOptions"
+                            label="Codec de video"
+                            :error="form.errors.recording_codec"
+                            required
+                        />
+                    </div>
+                    <div class="grid sm:grid-cols-2 gap-4">
+                        <ZyInput
+                            v-model.number="form.recording_fps"
+                            type="number"
+                            label="FPS (quadros por segundo)"
+                            :min="5"
+                            :max="60"
+                            :error="form.errors.recording_fps"
+                            required
+                        />
+                        <ZySelect
+                            v-model="form.recording_bitrate"
+                            :options="recordingBitrateOptions"
+                            label="Bitrate"
+                            :error="form.errors.recording_bitrate"
+                            required
+                        />
+                    </div>
+                </template>
             </div>
         </ZyCard>
 

@@ -112,7 +112,19 @@ class SegmentWatcherService
             if ($existing) {
                 // If already indexed as 'writing' and there's a newer file, mark as ready
                 if ($existing->status === RecordingSegment::STATUS_WRITING && $index < $fileCount - 1) {
-                    $existing->markReady($file->getSize());
+                    // Calculate real duration from the NEXT segment's start timestamp
+                    // instead of using now(), which would include idle time after recording stopped
+                    $realDuration = null;
+                    $realEndsAt = null;
+                    $nextFile = $filesArray[$index + 1] ?? null;
+                    if ($nextFile && $existing->starts_at) {
+                        $nextStartsAt = $this->parseTimestampFromFilename($nextFile->getFilename());
+                        if ($nextStartsAt) {
+                            $realDuration = (int) $existing->starts_at->diffInSeconds($nextStartsAt);
+                            $realEndsAt = $nextStartsAt;
+                        }
+                    }
+                    $existing->markReady($file->getSize(), $realDuration, $realEndsAt);
                     $newSegments++;
                 }
 

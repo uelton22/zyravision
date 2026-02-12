@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Head, useForm } from '@inertiajs/vue3';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
-import { ZyButton, ZyCard, ZySelect, ZyInput, ZySwitch, ZyBadge, ZyAlert } from '@design';
+import { ZyButton, ZyCard, ZySelect, ZyInput, ZySwitch, ZyBadge, ZyAlert, ZyBreadcrumb } from '@design';
 import { useToast } from '@/Composables/useToast';
 import {
     VideoCameraIcon,
@@ -10,6 +10,8 @@ import {
     TrashIcon,
     CheckCircleIcon,
 } from '@heroicons/vue/24/outline';
+
+defineOptions({ layout: AuthenticatedLayout });
 
 const { addToast } = useToast();
 
@@ -41,6 +43,12 @@ interface Props {
 }
 
 const props = defineProps<Props>();
+
+const breadcrumbs = [
+    { label: 'Inicio', href: '/dashboard' },
+    { label: 'Configuracoes' },
+    { label: 'Gravacao' },
+];
 
 const form = useForm({
     segment_duration_seconds: props.settings.segment_duration_seconds,
@@ -93,20 +101,20 @@ function submit() {
 <template>
     <Head title="Configuracoes de Gravacao" />
 
-    <AuthenticatedLayout>
-        <template #header>
-            <div class="flex items-center gap-3">
-                <VideoCameraIcon class="h-7 w-7 text-indigo-400" />
-                <div>
-                    <h2 class="text-xl font-semibold text-white">Configuracoes de Gravacao</h2>
-                    <p class="text-sm text-slate-400">
-                        Configure como as cameras gravam e armazenam os segmentos de video.
-                    </p>
-                </div>
-            </div>
-        </template>
+    <ZyBreadcrumb :items="breadcrumbs" class="mb-4" />
 
-        <div class="mx-auto max-w-4xl space-y-6 p-6">
+    <!-- Title -->
+    <div class="flex items-center gap-3 mb-6">
+        <VideoCameraIcon class="h-7 w-7 text-indigo-400" />
+        <div>
+            <h2 class="text-xl font-semibold text-[var(--zy-text-primary)]">Configuracoes de Gravacao</h2>
+            <p class="text-sm text-[var(--zy-text-muted)]">
+                Configure como as cameras gravam e armazenam os segmentos de video.
+            </p>
+        </div>
+    </div>
+
+    <div class="mx-auto max-w-4xl space-y-6">
             <!-- Info banner -->
             <ZyAlert variant="info">
                 <strong>Gravacao Continua por Segmentos:</strong> As cameras gravam continuamente em
@@ -238,5 +246,4 @@ function submit() {
                 </div>
             </form>
         </div>
-    </AuthenticatedLayout>
 </template>

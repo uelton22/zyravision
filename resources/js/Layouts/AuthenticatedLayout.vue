@@ -19,6 +19,11 @@ import {
     ClipboardDocumentListIcon,
     ServerStackIcon,
     CircleStackIcon,
+    KeyIcon,
+    BookOpenIcon,
+    DevicePhoneMobileIcon,
+    WrenchScrewdriverIcon,
+    CpuChipIcon,
 } from '@heroicons/vue/24/outline';
 import type { PageProps } from '@/Types';
 
@@ -101,6 +106,15 @@ const navigation = computed(() => {
         const configChildren: any[] = [
             { label: 'Gravacao', href: '/settings/recording', icon: VideoCameraIcon },
         ];
+
+        // API Tokens: admin + super-admin
+        configChildren.push(
+            { label: 'Tokens de API', href: '/settings/api-tokens', icon: KeyIcon },
+            { label: 'Dispositivos', href: '/settings/devices', icon: DevicePhoneMobileIcon },
+            { label: 'Documentacao API', href: '/settings/api/docs', icon: BookOpenIcon },
+            { label: 'Workers', href: '/settings/workers', icon: CpuChipIcon },
+            { label: 'Sistema', href: '/settings/system', icon: WrenchScrewdriverIcon },
+        );
 
         // Backends de armazenamento: super-admin only
         if (isSuperAdmin.value) {

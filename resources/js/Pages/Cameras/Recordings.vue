@@ -125,10 +125,49 @@ interface ParsedSegment {
     durationSec: number;
 }
 
+// Max reasonable duration for a single segment (10 min).
+// Anything larger indicates corrupted data (e.g., duration calculated from now() after a long pause).
+const MAX_SEGMENT_DURATION = 600;
+
 const parsedSegments = computed<ParsedSegment[]>(() => {
-    return props.segments.map((seg, i) => {
+    return props.segments.map((seg, i, arr) => {
         const startSec = dateToSecondsFromMidnight(seg.starts_at);
-        const dur = seg.duration_seconds || 60;
+
+        // Determine actual duration with safety checks
+        let dur = seg.duration_seconds || 60;
+
+        // If ends_at exists, prefer calculating from actual timestamps
+        if (seg.ends_at) {
+            const endFromTimestamp = dateToSecondsFromMidnight(seg.ends_at);
+            const calcDur = endFromTimestamp - startSec;
+            if (calcDur > 0 && calcDur <= MAX_SEGMENT_DURATION) {
+                dur = calcDur;
+            }
+        }
+
+        // Safety cap: if duration is unreasonably large, estimate from neighbors or cap
+        if (dur > MAX_SEGMENT_DURATION) {
+            // Try to estimate from the next segment's start time
+            const nextSeg = arr[i + 1];
+            if (nextSeg) {
+                const nextStart = dateToSecondsFromMidnight(nextSeg.starts_at);
+                const gap = nextStart - startSec;
+                if (gap > 0 && gap <= MAX_SEGMENT_DURATION) {
+                    dur = gap;
+                } else {
+                    dur = MAX_SEGMENT_DURATION;
+                }
+            } else {
+                // Last segment: use average of previous segments or default 60s
+                const prevDurations = arr.slice(Math.max(0, i - 5), i)
+                    .map(s => s.duration_seconds)
+                    .filter(d => d > 0 && d <= MAX_SEGMENT_DURATION);
+                dur = prevDurations.length > 0
+                    ? Math.round(prevDurations.reduce((a, b) => a + b, 0) / prevDurations.length)
+                    : 60;
+            }
+        }
+
         return {
             index: i,
             seg,

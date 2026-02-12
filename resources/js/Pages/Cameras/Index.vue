@@ -26,6 +26,7 @@ interface CameraRow {
     is_active: boolean;
     is_online: boolean;
     is_recording: boolean;
+    recording_quality: string | null;
     location: string | null;
     device?: { id: string; name: string; type: string; manufacturer: string } | null;
     tenant?: { id: string; name: string };
@@ -126,6 +127,19 @@ function deleteCamera() {
             },
         });
     }
+}
+
+const qualityLabels: Record<string, string> = {
+    original: 'Original',
+    high: '1080p',
+    medium: '720p',
+    low: '480p',
+    custom: 'Custom',
+};
+
+function getQualityLabel(quality: string | null): string {
+    if (!quality) return 'Original';
+    return qualityLabels[quality] || quality;
 }
 
 function changePage(page: number) {
@@ -230,9 +244,20 @@ function changePage(page: number) {
         </template>
 
         <template #cell-is_online="{ row }">
-            <ZyBadge :variant="(row as any).is_online ? 'success' : 'danger'" dot>
-                {{ (row as any).is_online ? 'Online' : 'Offline' }}
-            </ZyBadge>
+            <div class="flex items-center gap-1.5 flex-wrap">
+                <ZyBadge :variant="(row as any).is_online ? 'success' : 'danger'" dot>
+                    {{ (row as any).is_online ? 'Online' : 'Offline' }}
+                </ZyBadge>
+                <ZyBadge v-if="(row as any).is_recording" variant="danger">
+                    REC
+                </ZyBadge>
+                <ZyBadge
+                    v-if="(row as any).recording_quality && (row as any).recording_quality !== 'original'"
+                    variant="info"
+                >
+                    {{ getQualityLabel((row as any).recording_quality) }}
+                </ZyBadge>
+            </div>
         </template>
 
         <template #actions="{ row }">

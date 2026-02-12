@@ -14,7 +14,6 @@ RUN apk add --no-cache \
     oniguruma-dev \
     postgresql-dev \
     linux-headers \
-    ffmpeg \
     $PHPIZE_DEPS
 
 # PHP extensions

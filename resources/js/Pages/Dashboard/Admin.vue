@@ -18,6 +18,9 @@ import {
     CircleStackIcon,
     ClockIcon,
     CommandLineIcon,
+    FilmIcon,
+    QueueListIcon,
+    ExclamationTriangleIcon,
 } from '@heroicons/vue/24/outline';
 
 defineOptions({ layout: AuthenticatedLayout });
@@ -57,6 +60,19 @@ interface TopTenant {
     cameras_count: number;
 }
 
+interface WorkersSummary {
+    transcoder_count: number;
+    transcoder_healthy: number;
+    transcoding_cameras: number;
+    transcoder_capacity_percent: number;
+    queue_status: string;
+    queue_processes: number;
+    queue_jobs_pending: number;
+    queue_failed: number;
+    alerts_count: number;
+    alerts_critical: number;
+}
+
 interface Props {
     stats: Record<string, number>;
     systemHealth: {
@@ -73,6 +89,7 @@ interface Props {
     recentLogs: LogEntry[];
     topTenants: TopTenant[];
     liveCameras: LiveCamera[];
+    workersSummary?: WorkersSummary;
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -91,7 +108,50 @@ const props = withDefaults(defineProps<Props>(), {
     recentLogs: () => [],
     topTenants: () => [],
     liveCameras: () => [],
+    workersSummary: () => ({
+        transcoder_count: 0,
+        transcoder_healthy: 0,
+        transcoding_cameras: 0,
+        transcoder_capacity_percent: 0,
+        queue_status: 'unknown',
+        queue_processes: 0,
+        queue_jobs_pending: 0,
+        queue_failed: 0,
+        alerts_count: 0,
+        alerts_critical: 0,
+    }),
 });
+
+const ws = computed(() => props.workersSummary ?? {
+    transcoder_count: 0,
+    transcoder_healthy: 0,
+    transcoding_cameras: 0,
+    transcoder_capacity_percent: 0,
+    queue_status: 'unknown',
+    queue_processes: 0,
+    queue_jobs_pending: 0,
+    queue_failed: 0,
+    alerts_count: 0,
+    alerts_critical: 0,
+});
+
+function getWorkerHealthVariant(): 'success' | 'warning' | 'danger' {
+    if (ws.value.alerts_critical > 0) return 'danger';
+    if (ws.value.alerts_count > 0) return 'warning';
+    return 'success';
+}
+
+function getWorkerHealthLabel(): string {
+    if (ws.value.alerts_critical > 0) return 'Critico';
+    if (ws.value.alerts_count > 0) return 'Atencao';
+    return 'Saudavel';
+}
+
+function getCapacityColor(percent: number): string {
+    if (percent >= 90) return 'bg-danger-500';
+    if (percent >= 70) return 'bg-warning-500';
+    return 'bg-secondary-500';
+}
 
 const breadcrumbs = [
     { label: 'Inicio', href: '/dashboard' },
@@ -273,6 +333,104 @@ function eventLabel(event: string): string {
                 <p class="text-caption text-dark-400">
                     PHP {{ h.php_version }} / Laravel {{ h.laravel_version }}
                 </p>
+            </div>
+        </div>
+    </ZyCard>
+
+    <!-- Workers do Sistema -->
+    <ZyCard class="mb-8">
+        <template #header>
+            <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2">
+                    <CpuChipIcon class="h-5 w-5 text-indigo-400" />
+                    <h3 class="text-heading-sm font-semibold text-[var(--zy-text-primary)]">Workers do Sistema</h3>
+                </div>
+                <div class="flex items-center gap-2">
+                    <ZyBadge :variant="getWorkerHealthVariant()" dot>
+                        {{ getWorkerHealthLabel() }}
+                    </ZyBadge>
+                    <a href="/settings/workers" class="text-xs text-primary-500 hover:text-primary-400">
+                        Ver detalhes →
+                    </a>
+                </div>
+            </div>
+        </template>
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <!-- Transcoders -->
+            <div class="rounded-lg bg-[var(--zy-surface-tertiary)] p-4">
+                <div class="flex items-center gap-2 mb-2">
+                    <FilmIcon class="h-4 w-4 text-indigo-400" />
+                    <span class="text-xs text-[var(--zy-text-muted)] font-medium">Transcoders</span>
+                </div>
+                <p class="text-xl font-bold text-white mb-1">
+                    {{ ws.transcoder_healthy }}<span class="text-sm text-[var(--zy-text-muted)]">/{{ ws.transcoder_count }}</span>
+                </p>
+                <div v-if="ws.transcoder_count > 0" class="space-y-1">
+                    <div class="h-1.5 bg-dark-700 rounded-full overflow-hidden">
+                        <div
+                            :class="['h-full rounded-full', getCapacityColor(ws.transcoder_capacity_percent)]"
+                            :style="{ width: Math.min(100, ws.transcoder_capacity_percent) + '%' }"
+                        />
+                    </div>
+                    <p class="text-[10px] text-[var(--zy-text-muted)]">
+                        {{ ws.transcoding_cameras }} camera(s) &middot; {{ ws.transcoder_capacity_percent }}% cap.
+                    </p>
+                </div>
+                <p v-else class="text-[10px] text-dark-600">Nenhum ativo</p>
+            </div>
+
+            <!-- Queue -->
+            <div class="rounded-lg bg-[var(--zy-surface-tertiary)] p-4">
+                <div class="flex items-center gap-2 mb-2">
+                    <QueueListIcon class="h-4 w-4 text-blue-400" />
+                    <span class="text-xs text-[var(--zy-text-muted)] font-medium">Queue (Horizon)</span>
+                </div>
+                <p class="text-xl font-bold text-white mb-1">
+                    {{ ws.queue_processes }} <span class="text-sm text-[var(--zy-text-muted)]">proc.</span>
+                </p>
+                <ZyBadge
+                    :variant="ws.queue_status === 'running' ? 'success' : 'danger'"
+                    dot
+                    class="text-[10px]"
+                >
+                    {{ ws.queue_status === 'running' ? 'Ativo' : 'Inativo' }}
+                </ZyBadge>
+            </div>
+
+            <!-- Pending Jobs -->
+            <div class="rounded-lg bg-[var(--zy-surface-tertiary)] p-4">
+                <div class="flex items-center gap-2 mb-2">
+                    <ServerStackIcon class="h-4 w-4 text-amber-400" />
+                    <span class="text-xs text-[var(--zy-text-muted)] font-medium">Jobs Pendentes</span>
+                </div>
+                <p class="text-xl font-bold"
+                    :class="ws.queue_jobs_pending > 50 ? 'text-danger-400' : ws.queue_jobs_pending > 10 ? 'text-warning-400' : 'text-white'"
+                >
+                    {{ ws.queue_jobs_pending }}
+                </p>
+                <p v-if="ws.queue_failed > 0" class="text-[10px] text-danger-400 mt-1">
+                    {{ ws.queue_failed }} falhas recentes
+                </p>
+                <p v-else class="text-[10px] text-secondary-500 mt-1">Sem falhas</p>
+            </div>
+
+            <!-- Alerts -->
+            <div class="rounded-lg bg-[var(--zy-surface-tertiary)] p-4">
+                <div class="flex items-center gap-2 mb-2">
+                    <ExclamationTriangleIcon class="h-4 w-4"
+                        :class="ws.alerts_critical > 0 ? 'text-danger-400' : ws.alerts_count > 0 ? 'text-warning-400' : 'text-secondary-400'"
+                    />
+                    <span class="text-xs text-[var(--zy-text-muted)] font-medium">Alertas</span>
+                </div>
+                <p class="text-xl font-bold"
+                    :class="ws.alerts_critical > 0 ? 'text-danger-400' : ws.alerts_count > 0 ? 'text-warning-400' : 'text-white'"
+                >
+                    {{ ws.alerts_count }}
+                </p>
+                <p v-if="ws.alerts_critical > 0" class="text-[10px] text-danger-400 mt-1">
+                    {{ ws.alerts_critical }} critico(s)
+                </p>
+                <p v-else class="text-[10px] text-secondary-500 mt-1">Tudo normal</p>
             </div>
         </div>
     </ZyCard>

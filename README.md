@@ -1950,7 +1950,589 @@ ALIVE, AMCREST, AVTech, Avigilon, CLEAR, D-Link, Eneo, FICO, FOSCAM, GREATEK, Ge
 
 ---
 
-## 🧠 FASE 7 — Inteligência Artificial
+## 🌐 FASE 7 — API REST, WebSocket & Integração Mobile ✅
+
+> **Status: CONCLUÍDA** — API REST completa com ~35 endpoints, WebSocket broadcasting via Reverb, documentação interativa, gestão de tokens e dispositivos mobile.
+
+### 7A — Sanctum Config, CORS, Rate Limiting & Token CRUD ✅
+
+#### Configuração de Infraestrutura API
+- [x] `config/sanctum.php` — Expiração 24h mobile, stateful domains, guard config
+- [x] `config/cors.php` — Allowed origins (localhost, mobile), headers (Authorization, X-Tenant-ID), methods
+- [x] `app/Http/Middleware/ApiRateLimiter.php` — Rate limiting: mobile 60/min, web 120/min, background 10/min
+- [x] `app/Http/Middleware/ApiVersionHeader.php` — Adiciona `X-API-Version: v1` em todos os responses
+
+#### Padrão de Resposta API
+- [x] `app/Traits/ApiResponder.php` — Helpers padronizados:
+  - `success($data, $meta)` — Resposta de sucesso com dados
+  - `error($code, $msg, $status)` — Resposta de erro padronizada
+  - `paginated($resource)` — Coleção com paginação automática
+  - `noContent()` — Resposta 204
+
+#### Token CRUD (API)
+- [x] `app/Http/Controllers/Api/V1/TokenController.php` — index, store, destroy via API
+- [x] Abilities (scopes): `cameras:read`, `cameras:write`, `cameras:delete`, `devices:read`, `devices:write`, `devices:delete`, `streams:read`, `streams:write`, `recordings:read`, `recordings:write`, `recordings:download`, `recordings:delete`, `storage:read`, `storage:write`, `users:read`, `users:write`, `profile:read`, `profile:write`, `mobile:dashboard`, `mobile:sync`, `admin:*`
+
+#### Token CRUD (Frontend Web)
+- [x] `app/Http/Controllers/ApiTokenController.php` — Controller Inertia: index, store, destroy
+- [x] `resources/js/Pages/Settings/ApiTokens/Index.vue` — Página completa:
+  - ZyTable com colunas: nome, permissões (badges), último uso, criado em
+  - Modal de criação: nome, expiração, seletor de abilities por grupo
+  - Token mostrado apenas 1x com botão copiar
+  - Confirmação de revogação com ZyConfirmDialog
+  - Empty state quando sem tokens
+
+#### Middleware
+- [x] `bootstrap/app.php` — Aliases registrados: `ability` (CheckAbilities), `abilities` (CheckForAnyAbility)
+- [x] Rate limiter registrado no AppServiceProvider
+
+#### Rotas
+- [x] `routes/api.php` — Rotas de tokens dentro do grupo autenticado
+- [x] `routes/web.php` — Rota `/settings/api-tokens` com index, store, destroy
+
+#### Menu
+- [x] `resources/js/Layouts/AuthenticatedLayout.vue` — Sub-item "Tokens de API" no menu Configurações com `KeyIcon`
+
+#### TypeScript
+- [x] `resources/js/Types/index.d.ts` — Interface `ApiToken` adicionada
+
+---
+
+### 7B — API Resources (JSON Transformers) ✅
+
+Todos os recursos criados em `app/Http/Resources/Api/V1/`:
+
+| Resource | Modelo | Includes condicionais |
+|----------|--------|-----------------------|
+| [x] `UserResource.php` | User | tenant, roles |
+| [x] `TenantResource.php` | Tenant | activeSubscription, plan |
+| [x] `CameraResource.php` | Camera | device, activeStream, tenant, latestRecording |
+| [x] `CameraCollection.php` | Camera[] | Paginação automática |
+| [x] `DeviceResource.php` | Device | cameras |
+| [x] `StreamResource.php` | Stream | camera (com HLS/WebRTC URLs) |
+| [x] `RecordingResource.php` | Recording | camera, segments, stream, playbackUrl |
+| [x] `RecordingSegmentResource.php` | RecordingSegment | camera |
+| [x] `StorageSummaryResource.php` | — | Recurso virtual (dados agregados) |
+| [x] `StorageBackendResource.php` | StorageBackend | (mascara credenciais) |
+| [x] `PlanResource.php` | Plan | features como array |
+| [x] `ProfileResource.php` | User | tenant, roles, permissions, quotas |
+| [x] `MobileDashboardResource.php` | — | Recurso agregado: stats + cameras + alerts |
+
+#### Funcionalidades
+- [x] Sparse fieldsets: Resource verifica `?fields=` e filtra atributos retornados
+- [x] Conditional includes: `$this->whenLoaded('relation')` + parse de `?include=`
+- [x] Caching headers: `Last-Modified` calculado do `updated_at`, `ETag` como hash
+
+---
+
+### 7C — Controllers API Completos + Rotas (~35 endpoints) ✅
+
+#### Controllers (`app/Http/Controllers/Api/V1/`)
+
+| Controller | Métodos | Observação |
+|------------|---------|------------|
+| [x] `CameraController.php` | index, store, show, update, destroy, thumbnail | Reutiliza queries do web controller |
+| [x] `DeviceController.php` | index, store, show, update, destroy | CRUD completo de dispositivos CFTV |
+| [x] `StreamController.php` | start, stop, status | Retorna HLS/WebRTC URLs no JSON |
+| [x] `RecordingController.php` | index, show, destroy, stream, download, clip, cameraRecordings | byte-range para stream |
+| [x] `StorageController.php` | index, updateRetention | Dashboard dados + atualizar retenção |
+| [x] `PlanController.php` | index, show | Read-only |
+| [x] `ProfileController.php` | show, update, updatePassword | GET/PUT /profile |
+| [x] `MobileController.php` | dashboard, syncStatus, syncPull, syncPush | Endpoints otimizados para mobile |
+
+#### Form Requests (`app/Http/Requests/Api/V1/`)
+
+- [x] `StoreCameraRequest.php` — Validação para criação de câmera via API
+- [x] `UpdateCameraRequest.php` — Validação para atualização de câmera via API
+- [x] `StoreDeviceRequest.php` — Validação para criação de dispositivo via API
+- [x] `UpdateDeviceRequest.php` — Validação para atualização de dispositivo via API
+- [x] `UpdateProfileRequest.php` — Validação para atualização de perfil via API
+- [x] `UpdatePasswordRequest.php` — Validação para atualização de senha via API
+
+#### Rotas Registradas em `routes/api.php`
+
+```
+// Auth (já existia)
+POST   /api/v1/auth/login                      → AuthController@login
+POST   /api/v1/auth/register                   → AuthController@register
+POST   /api/v1/auth/logout                     → AuthController@logout
+GET    /api/v1/auth/me                          → AuthController@me
+POST   /api/v1/auth/forgot-password             → AuthController@forgotPassword
+
+// Profile
+GET    /api/v1/profile                         → ProfileController@show
+PUT    /api/v1/profile                         → ProfileController@update
+PUT    /api/v1/profile/password                → ProfileController@updatePassword
+
+// Cameras
+GET    /api/v1/cameras                         → CameraController@index
+POST   /api/v1/cameras                         → CameraController@store
+GET    /api/v1/cameras/{camera}                → CameraController@show
+PUT    /api/v1/cameras/{camera}                → CameraController@update
+DELETE /api/v1/cameras/{camera}                → CameraController@destroy
+GET    /api/v1/cameras/{camera}/thumbnail      → CameraController@thumbnail
+GET    /api/v1/cameras/{camera}/recordings     → RecordingController@cameraRecordings
+
+// Devices (CFTV equipment)
+GET    /api/v1/devices                         → DeviceController@index
+POST   /api/v1/devices                         → DeviceController@store
+GET    /api/v1/devices/{device}                → DeviceController@show
+PUT    /api/v1/devices/{device}                → DeviceController@update
+DELETE /api/v1/devices/{device}                → DeviceController@destroy
+
+// Streams
+POST   /api/v1/cameras/{camera}/stream/start   → StreamController@start
+POST   /api/v1/cameras/{camera}/stream/stop    → StreamController@stop
+GET    /api/v1/cameras/{camera}/stream         → StreamController@status
+
+// Recordings
+GET    /api/v1/recordings                      → RecordingController@index
+GET    /api/v1/recordings/{recording}          → RecordingController@show
+DELETE /api/v1/recordings/{recording}          → RecordingController@destroy
+GET    /api/v1/recordings/{recording}/stream   → RecordingController@stream
+GET    /api/v1/recordings/{recording}/download → RecordingController@download
+POST   /api/v1/recordings/{recording}/clip     → RecordingController@clip
+
+// Storage
+GET    /api/v1/storage                         → StorageController@index
+PUT    /api/v1/storage/retention               → StorageController@updateRetention
+
+// Plans (read-only)
+GET    /api/v1/plans                           → PlanController@index
+GET    /api/v1/plans/{plan}                    → PlanController@show
+
+// Tokens
+GET    /api/v1/tokens                          → TokenController@index
+POST   /api/v1/tokens                          → TokenController@store
+DELETE /api/v1/tokens/{token}                  → TokenController@destroy
+
+// Mobile
+GET    /api/v1/mobile/dashboard                → MobileController@dashboard
+GET    /api/v1/mobile/sync/status              → MobileController@syncStatus
+POST   /api/v1/mobile/sync/pull                → MobileController@syncPull
+POST   /api/v1/mobile/sync/push               → MobileController@syncPush
+
+// User Devices (mobile device management)
+GET    /api/v1/user-devices                    → DeviceRegistrationController@index
+POST   /api/v1/user-devices/register           → DeviceRegistrationController@register
+PUT    /api/v1/user-devices/{device}/push-token → DeviceRegistrationController@updatePushToken
+DELETE /api/v1/user-devices/{device}           → DeviceRegistrationController@revoke
+```
+
+---
+
+### 7D — WebSocket / Broadcasting (Reverb) ✅
+
+#### Configuração
+- [x] `config/broadcasting.php` — Driver `reverb`, host/port/key/secret
+- [x] `config/reverb.php` — Servidor Reverb porta 6001
+- [x] `routes/channels.php` — Authorization para canais privados
+- [x] `resources/js/echo.ts` — Config Laravel Echo com Reverb client
+- [x] `.env` — Variáveis REVERB_* e VITE_REVERB_* configuradas
+
+#### Docker
+- [x] `docker-compose.yml` — Service `reverb` adicionado (container rodando `artisan reverb:start`)
+
+#### Events com Broadcasting
+- [x] `app/Events/StreamStarted.php` — `ShouldBroadcast` + `broadcastOn()` → canal `tenant.{tenantId}`
+- [x] `app/Events/StreamFailed.php` — `ShouldBroadcast` + `broadcastOn()` → canal `tenant.{tenantId}`
+- [x] `app/Events/RecordingStarted.php` — `ShouldBroadcast` + `broadcastOn()` → canais tenant + camera
+- [x] `app/Events/RecordingStopped.php` — `ShouldBroadcast` + `broadcastOn()` → canais tenant + camera
+
+#### Novos Events
+- [x] `app/Events/CameraStatusChanged.php` — Broadcast quando camera muda is_online/is_recording
+- [x] `app/Events/StorageThresholdReached.php` — Broadcast quando storage > 90%
+
+#### Canais WebSocket
+
+| Canal | Autorização | Eventos |
+|-------|------------|---------|
+| `private-tenant.{tenantId}` | User pertence ao tenant ou é super-admin | camera.status, stream.started/failed, recording.started/stopped, storage.threshold |
+| `private-camera.{cameraId}` | User pertence ao tenant da camera | recording.started/stopped, heartbeat |
+| `private-user.{userId}` | User é o próprio | notification, device.revoked, session.expired |
+
+#### Pacotes Instalados
+- [x] `laravel-echo` (frontend) — Client WebSocket para Vue
+- [x] `pusher-js` (frontend) — Protocolo Pusher compatível com Reverb
+- [x] `pusher/pusher-php-server` (backend) — SDK PHP para broadcasting
+
+---
+
+### 7E — Documentação Interativa da API (Frontend) ✅
+
+#### Backend
+- [x] `app/Http/Controllers/ApiDocController.php` — Controller Inertia que serve dados dos endpoints ao frontend
+
+#### Frontend
+- [x] `resources/js/Pages/Settings/ApiDocs/Index.vue` — Página principal com sidebar + conteúdo com scroll
+- [x] `resources/js/Pages/Settings/ApiDocs/Components/EndpointCard.vue` — Card: método (GET/POST/PUT/DELETE), URL, params, request/response examples
+- [x] `resources/js/Pages/Settings/ApiDocs/Components/CodeExample.vue` — Bloco de código com tabs: cURL, JavaScript (fetch), Dart (dio), PHP (Http)
+- [x] `resources/js/Pages/Settings/ApiDocs/Components/SidebarNav.vue` — Navegação lateral por grupo
+
+#### Seções da Documentação
+- [x] Início Rápido — Obter token, primeira requisição
+- [x] Autenticação — Login, token management, headers obrigatórios
+- [x] Formato de Resposta — Estrutura padrão, códigos de erro, paginação
+- [x] Câmeras — CRUD completo com exemplos
+- [x] Dispositivos — CRUD
+- [x] Streaming — Start/stop/status + URLs HLS/WebRTC
+- [x] Gravações — List/show/delete/stream/download/clip
+- [x] Armazenamento — Dashboard + retenção
+- [x] Planos — Listagem
+- [x] Perfil — Get/update/password
+- [x] Mobile — Dashboard agregado, sync protocol
+- [x] WebSocket — Canais, autenticação, formato de eventos
+- [x] Rate Limiting — Limites por plataforma, headers X-RateLimit-*
+
+#### Rota e Menu
+- [x] `routes/web.php` — `GET /settings/api/docs`
+- [x] Menu: Configurações → "Documentação API" com `BookOpenIcon`
+
+---
+
+### 7F — Mobile Device Management & Push Prep ✅
+
+#### Database
+- [x] Migration `create_user_devices_table`:
+  - `id` (UUID), `user_id` (FK), `tenant_id` (FK), `device_id` (UUID único)
+  - `device_name`, `platform` (ios/android/web), `app_version`, `os_version`
+  - `push_token`, `push_provider` (fcm/apns), `is_active`, `last_active_at`
+  - `revoked_at`, `metadata` (JSON), timestamps
+
+#### Backend
+- [x] `app/Models/UserDevice.php` — HasUuids, BelongsTo(User, Tenant), scopes: active(), forUser(), forTenant()
+- [x] `app/Http/Controllers/Api/V1/DeviceRegistrationController.php` — register, updatePushToken, revoke, index (API)
+- [x] `app/Http/Resources/Api/V1/UserDeviceResource.php` — JSON transformer (mascara push_token, mostra has_push_token)
+
+#### Rotas API
+- [x] `routes/api.php`:
+  - `GET /api/v1/user-devices` — Listar dispositivos do usuário
+  - `POST /api/v1/user-devices/register` — Registrar novo dispositivo
+  - `PUT /api/v1/user-devices/{device}/push-token` — Atualizar push token
+  - `DELETE /api/v1/user-devices/{device}` — Revogar dispositivo
+
+#### Frontend — Página de Gestão de Dispositivos Conectados
+- [x] `app/Http/Controllers/UserDeviceController.php` — Controller Inertia: index, revoke, destroy
+  - Super-admin sem tenant vê todos os dispositivos; admin filtra por tenant
+- [x] `resources/js/Pages/Settings/Devices/Index.vue` — Página completa:
+  - Stats cards: total, ativos, revogados, iOS, Android, Web
+  - Filtros: Todos / Ativos / Revogados
+  - ZyTable: nome (com ícone plataforma), plataforma (badge colorido), usuário, status (Ativo/Inativo/Revogado), última atividade, data registro
+  - Ícone push notifications (sininho) quando ativo
+  - Ações: Desconectar (revoke) e Remover (delete) com confirmação
+  - Empty state quando sem dispositivos
+- [x] `routes/web.php` — `GET /settings/devices`, `PUT /settings/devices/{device}/revoke`, `DELETE /settings/devices/{device}`
+- [x] Menu: Configurações → "Dispositivos" com `DevicePhoneMobileIcon`
+- [x] `resources/js/Types/index.d.ts` — Interface `UserDevice` adicionada
+
+---
+
+### 7G — Manutenção do Sistema (Cache Management) ✅
+
+#### Backend
+- [x] `app/Http/Controllers/SystemSettingsController.php` — Controller Inertia:
+  - `index()` — Exibe informações de cache (segment cache, views, app cache)
+  - `clearSegmentCache()` — Limpa `storage/app/segment_cache/*` (vídeos em cache local)
+  - `clearAppCache()` — Executa `cache:clear`, `view:clear`, `config:clear`, `route:clear`, `event:clear`
+
+#### Frontend
+- [x] `resources/js/Pages/Settings/System/Index.vue` — Página de manutenção:
+  - Cards resumo: cache de segmentos, cache da aplicação, total
+  - Seção "Cache de Segmentos de Vídeo": tamanho, quantidade, botão limpar com confirmação
+  - Seção "Cache Geral da Aplicação": detalhamento (app cache, views compiladas, config/rotas), botão limpar com confirmação
+  - Alertas informativos sobre impacto de cada limpeza
+
+#### Rotas e Menu
+- [x] `routes/web.php` — `GET /settings/system`, `POST /settings/system/clear-segment-cache`, `POST /settings/system/clear-app-cache`
+- [x] Menu: Configurações → "Sistema" com `WrenchScrewdriverIcon`
+
+---
+
+### Resumo da Fase 7
+
+| Sub-fase | Arquivos criados | Arquivos modificados | Status |
+|----------|-----------------|---------------------|--------|
+| 7A — Sanctum + CORS + Tokens | 8 | 5 | ✅ |
+| 7B — API Resources | 13 | 0 | ✅ |
+| 7C — Controllers API + Rotas | 14 | 1 | ✅ |
+| 7D — WebSocket (Reverb) | 6 | 5 | ✅ |
+| 7E — Documentação API | 5 | 2 | ✅ |
+| 7F — Device Management | 6 | 3 | ✅ |
+| 7G — Manutenção do Sistema | 2 | 2 | ✅ |
+| **Total** | **~54 arquivos** | **~18 modificados** | **✅** |
+
+---
+
+## ⚙️ FASE 8 — Workers Escaláveis e Processamento Distribuído
+
+> **Principio fundamental**: Laravel é o **Control Plane** — NUNCA processa video diretamente.
+> Processamento pesado (FFmpeg, IA, uploads massivos) DEVE rodar em **workers dedicados e escaláveis**.
+
+### Contexto e Motivação
+
+O sistema ZyraVision foi projetado para ambientes corporativos com dezenas a centenas de cameras
+simultâneas. Com 30, 50 ou 100+ cameras gravando ao mesmo tempo, o processamento de video
+(transcodificação, análise, upload) consome recursos significativos de CPU/RAM/IO.
+
+**Problema identificado**: A implementação anterior de transcodificação FFmpeg rodava processos
+diretamente dentro do container `app` (PHP-FPM), violando o princípio arquitetural do projeto
+e criando um gargalo que impede escalabilidade horizontal.
+
+**Solução**: Criar um sistema de **workers distribuídos** onde cada tipo de processamento pesado
+roda em containers dedicados, escaláveis independentemente via `docker-compose.yml`.
+
+### Arquitetura de Workers
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                     CONTROL PLANE (Laravel)                         │
+│  container: app (PHP-FPM) — SEM FFmpeg, SEM processamento pesado   │
+│  - API REST / Inertia pages                                         │
+│  - Logica de negocio                                                │
+│  - Despacha jobs para filas Redis                                   │
+│  - Gerencia estado via banco de dados                               │
+└─────────────┬──────────────────────┬────────────────────────────────┘
+              │ Redis Queues          │ Redis Pub/Sub
+              ▼                       ▼
+┌──────────────────────┐  ┌────────────────────────────────────────────┐
+│  queue-default (1-N) │  │  transcoder-worker (0-N)                   │
+│  container: queue    │  │  container: transcoder                     │
+│  - Horizon worker    │  │  - Alpine + FFmpeg (SEM PHP pesado)        │
+│  - Notificacoes      │  │  - Daemon: ouve fila 'transcoding'        │
+│  - Emails            │  │  - Gerencia processos FFmpeg filhos        │
+│  - Jobs leves        │  │  - 1 worker = ate N cameras simultaneas   │
+│  - Uploads storage   │  │  - Escala: TRANSCODER_REPLICAS=N          │
+└──────────────────────┘  └────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────┐
+│                      MEDIA PLANE                                      │
+├──────────────────────────┬───────────────────────────────────────────┤
+│  mediamtx (1)            │  web/nginx (1-N)                          │
+│  - Ingestao RTSP         │  - Proxy HTTP + HLS + WebRTC              │
+│  - Gravacao nativa       │  - Cache de assets estaticos              │
+│  - Relay para FFmpeg     │  - Load balance para PHP-FPM              │
+│  - HLS/WebRTC origin     │  - Escala: WEB_REPLICAS=N                │
+│                          │  - Stateless (facil de escalar)           │
+└──────────────────────────┴───────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────────────┐
+│                      DATA PLANE                                       │
+├──────────────────────────┬───────────────────────────────────────────┤
+│  db (PostgreSQL 15)      │  redis (Redis 7)                          │
+│  - Dados persistentes    │  - Cache + Sessions                       │
+│  - Metadados gravacao    │  - Filas (queues)                         │
+│                          │  - Pub/Sub (worker communication)         │
+└──────────────────────────┴───────────────────────────────────────────┘
+```
+
+### Estimativa de Recursos por Cenário
+
+| Cenário | Cameras | Transcoders | Queue Workers | Nginx | RAM Total | vCPUs |
+|---------|---------|-------------|---------------|-------|-----------|-------|
+| Pequeno | 1-10    | 0-1         | 1             | 1     | 4-8 GB    | 2-4   |
+| Médio   | 10-30   | 1-2         | 2             | 1-2   | 8-16 GB   | 4-8   |
+| Grande  | 30-50   | 2-4         | 2-4           | 2-3   | 16-32 GB  | 8-16  |
+| Enterprise | 50-100+ | 4-8      | 4-8           | 3-5   | 32-64 GB  | 16-32 |
+
+### Variáveis de Ambiente para Escalabilidade
+
+```env
+# ─── Worker Scaling ─────────────────────────────────
+TRANSCODER_REPLICAS=1          # Workers FFmpeg (0 = desativado, cameras usam MediaMTX nativo)
+TRANSCODER_MAX_CAMERAS=10      # Max cameras por worker transcoder
+QUEUE_REPLICAS=1               # Workers de fila Laravel (Horizon)
+WEB_REPLICAS=1                 # Instancias Nginx (load balancing)
+SCHEDULER_ENABLED=true         # Habilitar scheduler
+
+# ─── FFmpeg Worker Config ───────────────────────────
+FFMPEG_H264_PRESET=fast        # ultrafast|superfast|veryfast|fast|medium
+FFMPEG_MAX_CONCURRENT=10       # Max processos FFmpeg por worker
+FFMPEG_LOG_LEVEL=warning       # quiet|panic|fatal|error|warning|info|verbose|debug
+```
+
+### Sub-fases de Implementação
+
+---
+
+### 8A — Remover Transcodificação do Container App
+
+**Objetivo**: Separar completamente o processamento de video do Control Plane Laravel.
+
+#### Backend — Remover do container app
+- [x] Remover `ffmpeg` do `docker/php/Dockerfile` (pacote `ffmpeg` no apk add)
+- [x] Refatorar `RecordingManager` para despachar jobs ao inves de chamar FFmpeg diretamente
+- [x] Converter `FFmpegTranscoder.php` em dispatcher de jobs (não executa FFmpeg localmente)
+- [x] Converter `FFmpegProcessManager.php` para consultar status via Redis (não gerencia PIDs locais)
+- [x] Manter `config/transcoding.php` (configuração compartilhada)
+- [x] Manter campos de qualidade no model Camera (recording_quality, etc.)
+
+#### Fluxo Refatorado
+```
+1. RecordingManager::startRecording()
+   ├─ quality == 'original' → MediaMTX native recording (sem mudança)
+   └─ quality != 'original' → Despacha StartTranscodingJob para fila 'transcoding'
+                                 ├─ Job armazena comando no Redis
+                                 └─ Worker transcoder detecta e inicia FFmpeg
+
+2. RecordingManager::stopRecording()
+   ├─ MediaMTX: editPath(record: false) (sem mudança)
+   └─ FFmpeg: Despacha StopTranscodingJob para fila 'transcoding'
+               └─ Worker transcoder detecta e para FFmpeg
+```
+
+---
+
+### 8B — Criar Worker de Transcodificação FFmpeg
+
+**Objetivo**: Container dedicado e escalável para processos FFmpeg.
+
+#### Docker
+- [x] Criar `docker/transcoder/Dockerfile` — Alpine + FFmpeg + PHP minimal (para artisan)
+- [x] Configurar volume compartilhado `/recordings` (mesmo do MediaMTX)
+- [x] Health check: verificar processos FFmpeg ativos
+
+#### Backend — Worker Daemon
+- [x] Criar `app/Console/Commands/TranscoderWorkerCommand.php` — daemon de longa duração
+  - Conecta ao Redis e escuta fila `transcoding`
+  - Gerencia processos FFmpeg filhos via `proc_open()`
+  - Reporta status (camera_id, pid, cpu%, uptime) ao Redis
+  - Graceful shutdown: para todos os FFmpeg com SIGTERM
+  - Limita cameras simultaneas por worker (`FFMPEG_MAX_CONCURRENT`)
+- [x] Criar `app/Jobs/StartTranscodingJob.php` — job para iniciar transcodificação
+- [x] Criar `app/Jobs/StopTranscodingJob.php` — job para parar transcodificação
+- [x] Refatorar `FFmpegTranscoder.php` para funcionar como dispatcher (app) ou executor (worker)
+
+#### Redis Schema para Comunicação
+```
+transcoding:cameras:{camera_id}  → { status, worker_id, pid, quality, started_at }
+transcoding:workers:{worker_id}  → { cameras: [...], cpu_usage, memory, started_at }
+transcoding:commands             → Redis List (FIFO queue para start/stop)
+```
+
+#### Configuração docker-compose.yml
+```yaml
+transcoder:
+  build:
+    context: .
+    dockerfile: docker/transcoder/Dockerfile
+  volumes:
+    - videodata:/recordings
+  depends_on:
+    - redis
+    - mediamtx
+  deploy:
+    replicas: ${TRANSCODER_REPLICAS:-1}
+  environment:
+    - FFMPEG_MAX_CONCURRENT=${FFMPEG_MAX_CONCURRENT:-10}
+```
+
+---
+
+### 8C — Separar Filas de Queue Workers
+
+**Objetivo**: Filas dedicadas para diferentes tipos de processamento.
+
+#### Filas Redis
+- [x] `default` — Jobs gerais (notificações, emails, cache)
+- [x] `recordings` — Scan de segmentos, upload para storage backend, cleanup
+- [x] `transcoding` — Comandos start/stop para workers FFmpeg
+- [x] `notifications` — Push notifications, WebSocket broadcasts
+
+#### Horizon — Configuração de Pools
+- [x] Configurar supervisors por fila no `config/horizon.php`
+- [x] Pool `default`: 2 workers, timeout 60s
+- [x] Pool `recordings`: 4 workers, timeout 300s (uploads podem demorar)
+- [x] Pool `transcoding`: 1 worker, timeout 0 (long-running dispatcher)
+- [x] Pool `notifications`: 2 workers, timeout 30s
+
+---
+
+### 8D — Worker Nginx Escalável (HLS Proxy)
+
+**Objetivo**: Escalar o proxy HTTP/HLS para suportar muitos viewers simultâneos.
+
+#### Nginx
+- [x] Configurar `upstream` para MediaMTX com failover
+- [x] Habilitar cache de segmentos HLS em disco (reduz carga no MediaMTX)
+- [x] Configurar `proxy_cache` para segmentos `.m3u8` e `.ts`/`.mp4`
+- [x] Adicionar health check endpoint `/health`
+- [x] Configurar `worker_processes auto` para usar todos os CPUs
+
+#### Docker Compose
+- [x] Habilitar `deploy.replicas` para service `web`
+- [x] Adicionar serviço de load balancer (ou usar Docker Swarm/traefik)
+- [x] Variável `WEB_REPLICAS` para configurar quantidade
+
+#### Estimativa de Capacidade Nginx
+| Viewers Simultâneos | Nginx Instances | RAM por Instance |
+|---------------------|-----------------|------------------|
+| 1-50                | 1               | 128 MB           |
+| 50-200              | 2               | 256 MB           |
+| 200-500             | 3-4             | 256 MB           |
+| 500+                | 5+              | 512 MB           |
+
+---
+
+### 8E — Comandos Artisan de Monitoramento de Workers
+
+**Objetivo**: Visibilidade e controle sobre workers via CLI.
+
+- [x] `php artisan workers:status` — Listar todos os workers ativos (transcoders, queue, nginx)
+- [x] `php artisan workers:scale transcoder N` — Sugerir comando docker para escalar
+- [x] `php artisan transcoder:status` — (refatorar existente) Status via Redis, não PIDs locais
+- [x] `php artisan transcoder:cleanup` — (refatorar existente) Limpar entradas Redis obsoletas
+
+---
+
+### 8F — Dashboard de Workers no Frontend
+
+**Objetivo**: Visualizar status de workers e capacidade do sistema na UI.
+
+#### Backend
+- [x] `app/Http/Controllers/WorkerDashboardController.php` — Dados de workers via Redis
+- [x] Endpoint API: `GET /api/v1/system/workers` — Status de todos os workers
+
+#### Frontend
+- [x] Página: `resources/js/Pages/Settings/Workers/Index.vue`
+  - Cards: Transcoders ativos, Queue workers, Nginx instances
+  - Lista de cameras em transcodificação (camera, qualidade, worker, uptime, CPU)
+  - Indicadores: cameras/worker, uso de CPU estimado, capacidade restante
+  - Alertas: workers sobrecarregados, processos mortos, filas acumulando
+
+#### Métricas no Dashboard Principal
+- [x] Widget: "Workers do Sistema" com indicador de saúde
+- [x] Alerta se fila de transcodificação estiver acumulando
+
+---
+
+### 8G — Testes e Validação
+
+- [x] Testar gravação com quality=original (MediaMTX nativo, sem transcoder)
+- [x] Testar gravação com quality=high/medium/low (FFmpeg via worker)
+- [x] Testar escalabilidade: subir 2-3 workers transcoder simultaneamente
+- [x] Testar failover: parar um worker e verificar redistribuição
+- [x] Testar container app SEM ffmpeg instalado (deve funcionar normalmente)
+- [x] Testar start/stop de gravação com transcodificação
+- [x] Verificar que segmentos aparecem corretamente no player
+- [x] Verificar upload para storage backend (MinIO/local)
+
+---
+
+### Resumo da Fase 8
+
+| Sub-fase | Descrição | Complexidade |
+|----------|-----------|-------------|
+| 8A — Remover FFmpeg do App | Separar video do Control Plane | Alta |
+| 8B — Worker Transcoder | Container FFmpeg escalável | Alta |
+| 8C — Separar Filas Queue | Filas dedicadas por tipo | Média |
+| 8D — Worker Nginx HLS | Nginx escalável com cache HLS | Média |
+| 8E — Comandos Monitoramento | CLI para status de workers | Baixa |
+| 8F — Dashboard Workers | UI de monitoramento | Média |
+| 8G — Testes e Validação | Validar todo o sistema | Alta |
+
+---
+
+## 🧠 FASE 9 — Inteligência Artificial
 
 ### Infra
 - [ ] Detecção de GPU
@@ -1970,7 +2552,7 @@ ALIVE, AMCREST, AVTech, Avigilon, CLEAR, D-Link, Eneo, FICO, FOSCAM, GREATEK, Ge
 
 ---
 
-## 🔍 FASE 8 — Busca, Timeline e Playback
+## 🔍 FASE 10 — Busca, Timeline e Playback
 
 - [ ] Timeline por câmera
 - [ ] Busca por data/hora
@@ -1980,7 +2562,7 @@ ALIVE, AMCREST, AVTech, Avigilon, CLEAR, D-Link, Eneo, FICO, FOSCAM, GREATEK, Ge
 
 ---
 
-## ⚖️ FASE 9 — Exportação e Compliance
+## ⚖️ FASE 11 — Exportação e Compliance
 
 - [ ] Exportação autenticada
 - [ ] Watermark
@@ -1990,7 +2572,7 @@ ALIVE, AMCREST, AVTech, Avigilon, CLEAR, D-Link, Eneo, FICO, FOSCAM, GREATEK, Ge
 
 ---
 
-## ⚡ FASE 10 — Performance e Escalabilidade
+## ⚡ FASE 12 — Performance e Escalabilidade
 
 - [ ] Cache Redis
 - [ ] Particionamento de tabelas
@@ -2000,7 +2582,7 @@ ALIVE, AMCREST, AVTech, Avigilon, CLEAR, D-Link, Eneo, FICO, FOSCAM, GREATEK, Ge
 
 ---
 
-## 🔐 FASE 11 — Segurança
+## 🔐 FASE 13 — Segurança
 
 - [ ] HTTPS obrigatório
 - [ ] TLS 1.3
@@ -2011,7 +2593,7 @@ ALIVE, AMCREST, AVTech, Avigilon, CLEAR, D-Link, Eneo, FICO, FOSCAM, GREATEK, Ge
 
 ---
 
-## 🧪 FASE 12 — Testes e Qualidade
+## 🧪 FASE 14 — Testes e Qualidade
 
 - [ ] Testes unitários (>80%)
 - [ ] Testes de integração
@@ -2021,7 +2603,7 @@ ALIVE, AMCREST, AVTech, Avigilon, CLEAR, D-Link, Eneo, FICO, FOSCAM, GREATEK, Ge
 
 ---
 
-## 📈 FASE 13 — Observabilidade
+## 📈 FASE 15 — Observabilidade
 
 - [ ] Logs estruturados
 - [ ] Métricas Prometheus
@@ -2030,7 +2612,7 @@ ALIVE, AMCREST, AVTech, Avigilon, CLEAR, D-Link, Eneo, FICO, FOSCAM, GREATEK, Ge
 
 ---
 
-## 🚀 FASE 14 — Deploy e Operação
+## 🚀 FASE 16 — Deploy e Operação
 
 - [ ] Docker Compose
 - [ ] Suporte VPS / On-prem
@@ -2040,13 +2622,14 @@ ALIVE, AMCREST, AVTech, Avigilon, CLEAR, D-Link, Eneo, FICO, FOSCAM, GREATEK, Ge
 
 ---
 
-## 🧭 FASE 15 — Roadmap Pós-MVP
+## 🧭 FASE 17 — Roadmap Pós-MVP
 
-- [ ] Apps mobile
+- [ ] Apps mobile (Flutter)
 - [ ] Mapas interativos
 - [ ] Analytics avançado
 - [ ] IA avançada
 - [ ] APIs públicas
+- [ ] Integrações ERP/CRM
 
 ---
 
