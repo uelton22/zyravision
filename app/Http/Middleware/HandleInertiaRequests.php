@@ -48,6 +48,7 @@ class HandleInertiaRequests extends Middleware
                 'error' => fn () => $request->session()->get('error'),
                 'warning' => fn () => $request->session()->get('warning'),
                 'info' => fn () => $request->session()->get('info'),
+                'newToken' => fn () => $request->session()->get('newToken'),
             ],
             'app' => [
                 'name' => config('app.name'),

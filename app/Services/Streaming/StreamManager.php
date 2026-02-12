@@ -153,7 +153,95 @@ class StreamManager
     }
 
     /**
+     * Hard reset a stream — removes path from MediaMTX completely,
+     * waits briefly, then re-registers it with a fresh connection.
+     *
+     * This is the automated equivalent of the "Force Reset" button.
+     * Used when soft recovery (waiting for MediaMTX reconnection) fails.
+     *
+     * IMPORTANT: This forces MediaMTX to close the existing RTSP connection
+     * and open a brand new one. Use sparingly to avoid stressing cameras.
+     */
+    public function hardResetStream(Stream $stream): bool
+    {
+        $camera = $stream->camera;
+
+        if (! $camera || ! $camera->is_active) {
+            Log::warning("hardResetStream: camera not active for stream {$stream->id}.");
+            return false;
+        }
+
+        $path = $stream->mediamtx_path;
+        $rtspUrl = $stream->rtsp_input_url;
+
+        if (! $path || ! $rtspUrl) {
+            Log::error("hardResetStream: missing path or RTSP URL for stream {$stream->id}.");
+            return false;
+        }
+
+        Log::info("hardResetStream: performing hard reset for stream {$stream->id}.", [
+            'path' => $path,
+            'camera_id' => $camera->id,
+        ]);
+
+        // Step 1: Remove path completely from MediaMTX (kills RTSP connection)
+        $this->mediaMtxClient->removePath($path);
+
+        // Step 2: Brief delay to allow cleanup
+        $delay = config('streaming.recovery.hard_reset_delay_seconds', 3);
+        sleep($delay);
+
+        // Step 3: Re-register path with fresh RTSP connection
+        $config = [
+            'source' => $rtspUrl,
+            'rtspTransport' => $camera->transport ?? 'tcp',
+            'sourceOnDemand' => false,
+        ];
+
+        $registered = $this->mediaMtxClient->addPath($path, $config);
+
+        if (! $registered) {
+            Log::error("hardResetStream: failed to re-register path {$path}.");
+            return false;
+        }
+
+        // Step 4: Mark stream as reconnecting
+        $stream->update([
+            'status' => Stream::STATUS_RECONNECTING,
+            'error_message' => null,
+            'last_health_check' => now(),
+        ]);
+
+        // Step 5: Wait and check if source connected
+        sleep(2);
+        $ready = $this->mediaMtxClient->isPathReady($path);
+
+        if ($ready) {
+            $stream->markActive();
+            $camera->update(['is_online' => true, 'last_seen_at' => now()]);
+
+            // Re-enable continuous recording if configured
+            if ($camera->continuous_recording) {
+                $this->mediaMtxClient->editPath($path, ['record' => true]);
+                $camera->update(['is_recording' => true]);
+            }
+
+            Log::info("hardResetStream: stream {$stream->id} recovered successfully via hard reset.");
+            return true;
+        }
+
+        // Not ready yet but path was re-registered — monitor will pick it up
+        Log::info("hardResetStream: path re-registered for stream {$stream->id}, waiting for MediaMTX to connect.");
+        return true;
+    }
+
+    /**
      * Get the current status of a stream from MediaMTX.
+     *
+     * IMPORTANT: This method does NOT mark streams as error on a single check.
+     * Transient disconnections are normal — only the MonitorStreamsJob should
+     * mark streams as error after multiple consecutive failed checks.
+     * This prevents a single status poll from permanently breaking a stream.
      */
     public function getStreamStatus(Stream $stream): array
     {
@@ -162,15 +250,28 @@ class StreamManager
 
         // Update status based on real state
         if ($stream->isRunning() && ! $ready) {
-            // Stream was active but source dropped
-            if ($stream->started_at && $stream->started_at->diffInSeconds(now()) > 30) {
-                $stream->markError('Source dropped — stream is no longer receiving data.');
-                // Camera is no longer receiving data — mark as offline
+            // Source is currently not ready — mark as reconnecting (NOT error)
+            // The MonitorStreamsJob will handle error escalation after multiple checks
+            if ($stream->status === Stream::STATUS_ACTIVE &&
+                $stream->started_at &&
+                $stream->started_at->diffInSeconds(now()) > 30) {
+                $stream->markReconnecting();
                 $stream->camera?->update(['is_online' => false]);
+                Log::info("getStreamStatus: stream {$stream->id} source dropped, marked as reconnecting (monitor will handle recovery).");
             }
         } elseif ($stream->status === Stream::STATUS_STARTING && $ready) {
             $stream->markActive();
             $stream->camera?->update(['is_online' => true, 'last_seen_at' => now()]);
+        } elseif ($stream->status === Stream::STATUS_RECONNECTING && $ready) {
+            // Stream recovered on its own (MediaMTX reconnected)
+            $stream->markActive();
+            $stream->camera?->update(['is_online' => true, 'last_seen_at' => now()]);
+            $stream->updateHealthCheck([
+                'reconnect_count' => 0,
+                'recovery_attempt' => 0,
+                'hard_reset_count' => 0,
+            ]);
+            Log::info("getStreamStatus: stream {$stream->id} recovered automatically.");
         }
 
         return [

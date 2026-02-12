@@ -48,6 +48,52 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Auto-Recovery Configuration (Self-Healing)
+    |--------------------------------------------------------------------------
+    |
+    | Controls how the system automatically recovers from stream failures.
+    | The system NEVER permanently gives up — it uses progressive strategies:
+    |
+    | Phase 1 (Soft Recovery): Re-register path or wait for MediaMTX reconnect
+    |   - Fast backoff (30s–120s) for transient network issues
+    |
+    | Phase 2 (Hard Reset): Remove path + re-add (like manual "Force Reset")
+    |   - Triggered after soft_attempts_before_hard_reset soft failures
+    |   - Clears any stuck state in MediaMTX
+    |
+    | Phase 3 (Maintenance Mode): Slow periodic hard resets indefinitely
+    |   - Runs every maintenance_interval_seconds
+    |   - Keeps trying until camera comes back online
+    |   - No human intervention required
+    |
+    */
+
+    'recovery' => [
+        // Phase 1: Soft recovery (re-register path, wait for MediaMTX)
+        // Backoff: 30s, 45s, 60s, 90s, 120s (max)
+        'soft_max_attempts' => (int) env('STREAM_SOFT_MAX_ATTEMPTS', 5),
+        'soft_initial_backoff_seconds' => 30,
+        'soft_max_backoff_seconds' => 120,
+
+        // Phase 2: Hard reset (remove + re-add path, like "Force Reset")
+        // How many soft attempts must fail before trying a hard reset
+        'soft_attempts_before_hard_reset' => (int) env('STREAM_SOFT_BEFORE_HARD_RESET', 3),
+        'hard_max_attempts' => (int) env('STREAM_HARD_MAX_ATTEMPTS', 3),
+        'hard_reset_cooldown_seconds' => 60,
+
+        // Phase 3: Maintenance mode (slow periodic hard resets, never gives up)
+        'maintenance_interval_seconds' => (int) env('STREAM_MAINTENANCE_INTERVAL', 300),
+
+        // How many monitor checks (30s each) a path can be "not ready"
+        // before marking as error and triggering recovery
+        'not_ready_checks_before_error' => (int) env('STREAM_NOT_READY_CHECKS', 6),
+
+        // Delay in seconds after removing a path before re-adding it
+        'hard_reset_delay_seconds' => 3,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Snapshot Configuration
     |--------------------------------------------------------------------------
     */

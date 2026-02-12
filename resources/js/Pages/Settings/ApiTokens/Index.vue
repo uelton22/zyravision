@@ -110,12 +110,21 @@ function openCreateModal() {
 function createToken() {
     form.post('/settings/api-tokens', {
         preserveScroll: true,
-        onSuccess: (resp) => {
-            const flash = (resp.props as any).flash;
-            if (flash?.newToken) {
-                newTokenValue.value = flash.newToken;
+        onSuccess: (page) => {
+            // O token vem via flash session compartilhado pelo middleware Inertia
+            const flash = (page.props as any)?.flash;
+            const token = flash?.newToken;
+
+            if (token) {
+                newTokenValue.value = token;
+                form.reset();
+            } else {
+                // Fallback: se nao veio no flash, fechar o modal
+                closeCreateModal();
             }
-            form.reset();
+        },
+        onError: () => {
+            // Manter modal aberto para corrigir erros de validacao
         },
     });
 }
