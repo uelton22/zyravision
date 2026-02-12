@@ -92,7 +92,7 @@ class MonitorStreamsJob implements ShouldQueue
         $ready = $pathInfo['ready'] ?? false;
 
         if ($ready) {
-            $this->handleHealthyStream($stream, $pathInfo);
+            $this->handleHealthyStream($stream, $pathInfo, $client);
             return;
         }
 
@@ -137,8 +137,9 @@ class MonitorStreamsJob implements ShouldQueue
     /**
      * Handle a healthy stream (path exists and source is ready).
      * Resets all recovery counters on success.
+     * Also ensures recording is enabled if the camera has continuous_recording.
      */
-    private function handleHealthyStream(Stream $stream, array $pathInfo): void
+    private function handleHealthyStream(Stream $stream, array $pathInfo, MediaMtxClient $client): void
     {
         $wasRecovering = in_array($stream->status, [Stream::STATUS_STARTING, Stream::STATUS_RECONNECTING]);
 
@@ -151,6 +152,19 @@ class MonitorStreamsJob implements ShouldQueue
                     'recovery_attempts' => $stream->metadata['recovery_attempt'] ?? 0,
                     'hard_resets' => $stream->metadata['hard_reset_count'] ?? 0,
                 ]);
+            }
+
+            // When a stream transitions to active, ensure recording is enabled
+            // if the camera has continuous_recording configured.
+            // This covers the case where recording couldn't start during stream
+            // creation (because stream wasn't ready yet).
+            $camera = $stream->camera;
+            if ($camera && $camera->continuous_recording && ! $camera->is_recording) {
+                $recorded = $client->editPath($stream->mediamtx_path, ['record' => true]);
+                if ($recorded) {
+                    $camera->update(['is_recording' => true]);
+                    Log::info("MonitorStreamsJob: gravacao continua ativada para camera {$camera->id} (stream ficou ativo).");
+                }
             }
         }
 

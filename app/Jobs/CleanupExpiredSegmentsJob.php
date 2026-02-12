@@ -51,7 +51,7 @@ class CleanupExpiredSegmentsJob implements ShouldQueue
                         $backend = StorageBackend::find($segment->storage_backend_id);
                         if ($backend) {
                             $driver = $storageManager->getDriver($backend);
-                            $driver->deleteFile($segment->remote_path);
+                            $driver->delete($segment->remote_path);
                         }
                     }
 

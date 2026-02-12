@@ -84,11 +84,18 @@ class StreamManager
             $stream->update(['status' => Stream::STATUS_STARTING, 'started_at' => now()]);
         }
 
-        // Enable continuous recording if configured
-        if ($camera->continuous_recording && $ready) {
-            $this->mediaMtxClient->editPath($path, ['record' => true]);
-            $camera->update(['is_recording' => true]);
-            Log::info("Gravacao continua habilitada para camera {$camera->id}.", ['path' => $path]);
+        // Enable continuous recording if configured.
+        // If the stream is ready now, enable recording immediately.
+        // If not ready yet, the MonitorStreamsJob will enable recording
+        // when the stream transitions to active.
+        if ($camera->continuous_recording) {
+            if ($ready) {
+                $this->mediaMtxClient->editPath($path, ['record' => true]);
+                $camera->update(['is_recording' => true]);
+                Log::info("Gravacao continua habilitada para camera {$camera->id}.", ['path' => $path]);
+            } else {
+                Log::info("Gravacao continua pendente para camera {$camera->id} (stream ainda nao esta pronto — sera ativada pelo monitor).");
+            }
         }
 
         Log::info("Stream started for camera {$camera->id}.", [

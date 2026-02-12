@@ -2,16 +2,19 @@
 
 namespace App\Http\Controllers;
 
+use App\Jobs\StartStreamJob;
 use App\Models\Camera;
 use App\Models\Device;
 use App\Models\Recording;
 use App\Models\RecordingSegment;
 use App\Models\Tenant;
+use App\Services\Camera\CameraCleanupService;
 use App\Services\Camera\StreamUrlResolver;
 use App\Services\Manufacturers\ManufacturerResolver;
 use Carbon\Carbon;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -182,6 +185,9 @@ class CameraController extends Controller
             'has_ptz' => $validated['has_ptz'] ?? false,
             'has_audio' => $validated['has_audio'] ?? false,
             'ipv6_preferred' => $validated['ipv6_preferred'] ?? false,
+            // Cameras gravam por padrao ao serem criadas.
+            // O usuario pode desativar manualmente depois.
+            'continuous_recording' => $validated['continuous_recording'] ?? true,
         ]);
 
         // Update quota usage
@@ -194,8 +200,19 @@ class CameraController extends Controller
             ]);
         }
 
+        // Auto-start stream if camera is active — the camera should come online
+        // automatically without requiring manual intervention from the user.
+        if ($camera->is_active) {
+            try {
+                StartStreamJob::dispatch($camera->id);
+                Log::info("Auto-starting stream for newly created camera {$camera->id} ({$camera->name}).");
+            } catch (\Throwable $e) {
+                Log::warning("Failed to auto-start stream for camera {$camera->id}: {$e->getMessage()}");
+            }
+        }
+
         return redirect()->route('cameras.index')
-            ->with('success', 'Camera cadastrada com sucesso.');
+            ->with('success', 'Camera cadastrada com sucesso. O stream sera iniciado automaticamente.');
     }
 
     public function show(Camera $camera): Response
@@ -437,8 +454,21 @@ class CameraController extends Controller
 
         $tenantId = $camera->tenant_id;
         $deviceId = $camera->device_id;
+        $cameraName = $camera->name;
 
-        $camera->delete();
+        // ── Full cleanup: stop streams, delete files, purge cache, etc. ──
+        try {
+            $cleanupService = app(CameraCleanupService::class);
+            $cleanupLog = $cleanupService->cleanup($camera);
+
+            Log::info("Camera '{$cameraName}' cleanup completed.", $cleanupLog);
+        } catch (\Throwable $e) {
+            Log::error("Camera '{$cameraName}' cleanup failed: {$e->getMessage()}");
+            // Continue with deletion even if cleanup partially fails
+        }
+
+        // Force delete the camera record (triggers DB cascades for any remaining references)
+        $camera->forceDelete();
 
         // Update quota
         $this->updateCameraQuota($tenantId);
@@ -454,7 +484,7 @@ class CameraController extends Controller
         }
 
         return redirect()->route('cameras.index')
-            ->with('success', 'Camera removida com sucesso.');
+            ->with('success', "Camera '{$cameraName}' removida com sucesso. Todos os dados relacionados foram limpos.");
     }
 
     private function authorizeForTenant(Camera $camera): void
