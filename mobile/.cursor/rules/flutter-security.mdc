@@ -1,0 +1,306 @@
+---
+name: flutter-security
+description: Security rules — token storage, certificate pinning, biometric auth, session management, encryption, and data protection.
+---
+# ZyraVision Mobile — Security
+
+## Overview
+ZyraVision is a video surveillance platform. Security is critical — the app handles live camera feeds, recordings, and sensitive location data. All security measures protect both user data and physical security infrastructure.
+
+## Token Storage
+
+### CRITICAL: flutter_secure_storage Only
+- **Access tokens**: Stored exclusively in `flutter_secure_storage`.
+- **Refresh tokens**: Stored exclusively in `flutter_secure_storage`.
+- **NEVER** store tokens in `SharedPreferences`, `Hive` (even encrypted), or in-memory singletons that persist to disk.
+
+```dart
+class SecureTokenStore {
+  final FlutterSecureStorage _storage;
+
+  static const _accessTokenKey = 'access_token';
+  static const _refreshTokenKey = 'refresh_token';
+
+  SecureTokenStore(this._storage);
+
+  Future<void> saveTokens({
+    required String accessToken,
+    required String refreshToken,
+  }) async {
+    await _storage.write(key: _accessTokenKey, value: accessToken);
+    await _storage.write(key: _refreshTokenKey, value: refreshToken);
+  }
+
+  Future<String?> get accessToken => _storage.read(key: _accessTokenKey);
+  Future<String?> get refreshToken => _storage.read(key: _refreshTokenKey);
+
+  Future<void> clearTokens() async {
+    await _storage.delete(key: _accessTokenKey);
+    await _storage.delete(key: _refreshTokenKey);
+  }
+}
+```
+
+### Platform Configuration
+- **Android**: Uses EncryptedSharedPreferences (AES-256-GCM) backed by Android Keystore.
+- **iOS**: Uses Keychain with `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`.
+
+## Certificate Pinning
+
+### Production Requirement
+- Enable certificate pinning for the API domain in **production builds only**.
+- Pin the public key hash (SPKI), not the certificate itself (allows rotation).
+- Include at least 2 pins: current + backup.
+
+```dart
+// Use dio_http2_adapter or a custom SecurityContext
+class CertificatePinningInterceptor extends Interceptor {
+  static const _pins = [
+    'sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=', // Current
+    'sha256/BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=', // Backup
+  ];
+
+  @override
+  void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
+    // Pin validation happens at the HTTP client level
+    handler.next(options);
+  }
+}
+```
+
+### Development
+- Certificate pinning is **disabled** in debug/development builds to allow proxy tools (Charles, mitmproxy).
+- Controlled via build flavor, not runtime check.
+
+## Biometric Authentication
+
+### When Required
+Biometric authentication (fingerprint / Face ID) is required before:
+- Viewing camera recordings
+- Changing account settings (email, password)
+- Managing API keys or integrations
+- Exporting data
+- Accessing tenant administration
+
+### Implementation
+```dart
+class BiometricService {
+  final LocalAuthentication _localAuth;
+
+  Future<bool> authenticate({required String reason}) async {
+    final isAvailable = await _localAuth.canCheckBiometrics;
+    final isDeviceSupported = await _localAuth.isDeviceSupported();
+
+    if (!isAvailable || !isDeviceSupported) {
+      // Fall back to device PIN/pattern
+      return _localAuth.authenticate(
+        localizedReason: reason,
+        options: const AuthenticationOptions(
+          biometricOnly: false,
+          stickyAuth: true,
+        ),
+      );
+    }
+
+    return _localAuth.authenticate(
+      localizedReason: reason,
+      options: const AuthenticationOptions(
+        biometricOnly: true,
+        stickyAuth: true,
+      ),
+    );
+  }
+}
+```
+
+### Platform Permissions
+- **Android**: `android.permission.USE_BIOMETRIC` in `AndroidManifest.xml`.
+- **iOS**: `NSFaceIDUsageDescription` in `Info.plist` with Portuguese description.
+
+## Session Management
+
+### Session Timeout
+- **Inactive timeout**: 15 minutes of no user interaction.
+- Timer resets on any touch event, navigation, or API call.
+- On timeout: clear in-memory state, require re-authentication (biometric or login).
+
+```dart
+class SessionManager {
+  static const _timeoutDuration = Duration(minutes: 15);
+  Timer? _inactivityTimer;
+
+  void resetTimer() {
+    _inactivityTimer?.cancel();
+    _inactivityTimer = Timer(_timeoutDuration, _onSessionTimeout);
+  }
+
+  void _onSessionTimeout() {
+    // Clear sensitive in-memory data
+    // Navigate to lock screen
+    // Require biometric or password re-auth
+  }
+
+  void dispose() {
+    _inactivityTimer?.cancel();
+  }
+}
+```
+
+### Session Lifecycle
+1. **Login**: Store tokens securely, start session timer.
+2. **Active Use**: Reset timer on interaction.
+3. **Background**: Pause timer; resume when app returns to foreground.
+4. **Timeout**: Lock screen, require re-auth.
+5. **Logout**: Clear all tokens, cached data, and in-memory state.
+
+## Transport Security
+
+### TLS Requirements
+- **Minimum**: TLS 1.3 required for all API and streaming connections.
+- **No fallback**: Do not allow TLS 1.2 or lower.
+- **HSTS**: Respect HTTP Strict Transport Security headers.
+
+### Platform Configuration
+- **Android**: `network_security_config.xml` with `cleartextTrafficPermitted="false"`.
+- **iOS**: App Transport Security (ATS) enabled with no exceptions in production.
+
+```xml
+<!-- android/app/src/main/res/xml/network_security_config.xml -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>
+```
+
+## Local Data Encryption
+
+### Hive Encrypted Boxes
+All locally cached data must use encrypted Hive boxes.
+
+```dart
+class SecureHiveService {
+  Future<Box<T>> openEncryptedBox<T>(String name) async {
+    final encryptionKey = await _getOrCreateEncryptionKey();
+    return Hive.openBox<T>(
+      name,
+      encryptionCipher: HiveAesCipher(encryptionKey),
+    );
+  }
+
+  Future<Uint8List> _getOrCreateEncryptionKey() async {
+    final storage = const FlutterSecureStorage();
+    final existingKey = await storage.read(key: 'hive_encryption_key');
+
+    if (existingKey != null) {
+      return base64Decode(existingKey);
+    }
+
+    final newKey = Hive.generateSecureKey();
+    await storage.write(key: 'hive_encryption_key', value: base64Encode(newKey));
+    return Uint8List.fromList(newKey);
+  }
+}
+```
+
+### What Gets Encrypted
+| Data | Storage | Encrypted |
+|------|---------|-----------|
+| Auth tokens | flutter_secure_storage | Yes (platform keystore) |
+| User profile cache | Hive encrypted box | Yes |
+| Camera list cache | Hive encrypted box | Yes |
+| App preferences (non-sensitive) | Hive regular box | No |
+| Streaming URLs | In-memory only | N/A (not persisted) |
+
+## Logging Policy
+
+### NEVER Log
+- Authentication tokens (access, refresh)
+- User passwords or PINs
+- Biometric data
+- Personal information (email, phone, address)
+- Full API request/response bodies in production
+- Camera RTSP credentials
+- Tenant-specific security configurations
+
+### Allowed to Log
+- API endpoint paths (without query params containing tokens)
+- HTTP status codes
+- Error types (without sensitive details)
+- Performance metrics (latency, frame rate)
+- App lifecycle events
+- Non-sensitive user actions (navigation, button taps)
+
+```dart
+class SecureLogger {
+  void logApiCall(String method, String path, int statusCode, Duration duration) {
+    // OK: logs method, path, status, timing
+    if (kDebugMode) {
+      debugPrint('[$method] $path -> $statusCode (${duration.inMilliseconds}ms)');
+    }
+  }
+
+  void logError(Object error, StackTrace? stack) {
+    // Sanitize error before logging
+    final sanitized = _sanitizeError(error);
+    // Send to crash reporting (Sentry/Crashlytics)
+  }
+}
+```
+
+## Screenshot Prevention (Future)
+
+### Planned Implementation
+- Prevent screenshots and screen recording on sensitive screens (camera feeds, recordings, settings).
+- Android: `FLAG_SECURE` on sensitive Activities.
+- iOS: Detect screen capture and overlay sensitive content.
+- This is a planned feature; implementation details will be added when prioritized.
+
+## Data Cleanup
+
+### On Logout
+Clear ALL of the following:
+1. Auth tokens from secure storage.
+2. All Hive boxes (encrypted and regular).
+3. In-memory caches (provider state).
+4. Image/thumbnail caches.
+5. Pending API request queues.
+6. Session timers and background tasks.
+
+```dart
+class DataCleanupService {
+  Future<void> clearAllData() async {
+    await _secureStorage.deleteAll();
+    await Hive.deleteFromDisk();
+    // Invalidate all Riverpod providers
+    // Cancel all pending timers and streams
+    // Clear image cache
+    imageCache.clear();
+    imageCache.clearLiveImages();
+  }
+}
+```
+
+### On Account Deletion
+Same as logout, plus:
+- Remove device registration from backend.
+- Clear push notification tokens.
+- Delete any downloaded recordings.
+
+## Rules
+
+- NEVER store tokens in SharedPreferences or regular Hive boxes.
+- NEVER log sensitive data — tokens, passwords, personal information.
+- NEVER disable TLS validation in production builds.
+- NEVER skip biometric auth for sensitive operations.
+- NEVER persist streaming URLs or RTSP credentials to disk.
+- NEVER allow cleartext HTTP traffic in production.
+- ALWAYS use `flutter_secure_storage` for authentication tokens.
+- ALWAYS use encrypted Hive boxes for cached user/camera data.
+- ALWAYS implement session timeout (15 minutes inactive).
+- ALWAYS enable certificate pinning in production builds.
+- ALWAYS clear all data on logout — leave no traces.
+- ALWAYS require TLS 1.3 for all network connections.
+- ALWAYS sanitize error messages before logging or displaying.

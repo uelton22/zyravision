@@ -1,0 +1,506 @@
+---
+name: flutter-testing
+description: Testing rules — unit, widget, and integration tests, coverage targets, mocking strategy, and conventions.
+---
+# ZyraVision Mobile — Testing
+
+## Overview
+Testing ensures reliability across the 5-layer architecture. Each layer has specific testing strategies and coverage requirements. Tests are described in Portuguese for consistency with user-facing context.
+
+## Test Structure
+
+```
+test/
+├── unit/
+│   ├── domain/
+│   │   ├── entities/              # Entity behavior tests
+│   │   └── usecases/              # Use case logic tests
+│   ├── data/
+│   │   ├── repositories/          # Repository implementation tests
+│   │   ├── datasources/           # Data source tests (mocked HTTP)
+│   │   └── mappers/               # DTO <-> Entity mapper tests
+│   ├── state/
+│   │   └── notifiers/             # Notifier behavior tests
+│   └── presentation/
+│       └── viewmodels/            # ViewModel logic tests
+│
+├── widget/
+│   ├── widgets/                   # Zy* design system widget tests
+│   └── pages/                     # Page-level widget tests
+│
+├── integration/
+│   ├── auth_flow_test.dart        # Login -> Dashboard flow
+│   ├── camera_list_test.dart      # Camera listing and filtering
+│   └── streaming_test.dart        # Stream start/stop flow
+│
+├── fixtures/                      # JSON fixtures for API responses
+│   ├── cameras.json
+│   ├── user.json
+│   └── paginated_cameras.json
+│
+└── helpers/
+    ├── test_helpers.dart          # Shared test utilities
+    ├── mock_providers.dart        # Riverpod provider overrides
+    └── fake_data.dart             # Factory methods for test entities
+```
+
+## Coverage Targets
+
+| Layer | Target | Rationale |
+|-------|--------|-----------|
+| **Domain** (entities, use cases) | **90%** | Core business logic must be thoroughly tested |
+| **Data** (repositories, mappers) | **80%** | Data integrity and mapping correctness |
+| **State** (notifiers) | **80%** | State transitions and side effects |
+| **Presentation** (viewmodels) | **70%** | Formatting and display logic |
+| **UI** (widgets, pages) | **60%** | Key interactions and rendering |
+| **Overall** | **70%** | Minimum acceptable coverage |
+
+## Unit Tests
+
+### Domain Layer
+
+#### Entity Tests
+```dart
+// test/unit/domain/entities/camera_test.dart
+import 'package:flutter_test/flutter_test.dart';
+import 'package:zyravision_mobile/domain/entities/camera.dart';
+
+void main() {
+  group('Camera', () {
+    test('deve criar uma camera com valores padrao', () {
+      final camera = Camera(
+        id: '123',
+        name: 'Camera Entrada',
+        status: CameraStatus.active,
+      );
+
+      expect(camera.id, '123');
+      expect(camera.name, 'Camera Entrada');
+      expect(camera.status, CameraStatus.active);
+    });
+
+    test('deve comparar igualdade por valor (freezed)', () {
+      final camera1 = Camera(id: '1', name: 'Cam', status: CameraStatus.active);
+      final camera2 = Camera(id: '1', name: 'Cam', status: CameraStatus.active);
+
+      expect(camera1, equals(camera2));
+    });
+
+    test('deve criar copia com copyWith', () {
+      final camera = Camera(id: '1', name: 'Cam', status: CameraStatus.active);
+      final updated = camera.copyWith(status: CameraStatus.offline);
+
+      expect(updated.status, CameraStatus.offline);
+      expect(updated.name, 'Cam'); // unchanged
+    });
+  });
+}
+```
+
+#### Use Case Tests
+```dart
+// test/unit/domain/usecases/get_active_cameras_test.dart
+import 'package:flutter_test/flutter_test.dart';
+import 'package:mocktail/mocktail.dart';
+
+class MockCameraRepository extends Mock implements CameraRepository {}
+
+void main() {
+  late GetActiveCameras useCase;
+  late MockCameraRepository mockRepository;
+
+  setUp(() {
+    mockRepository = MockCameraRepository();
+    useCase = GetActiveCameras(mockRepository);
+  });
+
+  group('GetActiveCameras', () {
+    test('deve retornar apenas cameras ativas', () async {
+      when(() => mockRepository.getCameras()).thenAnswer((_) async => [
+        Camera(id: '1', name: 'Cam1', status: CameraStatus.active),
+        Camera(id: '2', name: 'Cam2', status: CameraStatus.offline),
+        Camera(id: '3', name: 'Cam3', status: CameraStatus.active),
+      ]);
+
+      final result = await useCase();
+
+      expect(result, hasLength(2));
+      expect(result.every((c) => c.status == CameraStatus.active), isTrue);
+    });
+
+    test('deve retornar lista vazia quando nao ha cameras ativas', () async {
+      when(() => mockRepository.getCameras()).thenAnswer((_) async => [
+        Camera(id: '1', name: 'Cam1', status: CameraStatus.offline),
+      ]);
+
+      final result = await useCase();
+
+      expect(result, isEmpty);
+    });
+
+    test('deve propagar excecao do repositorio', () async {
+      when(() => mockRepository.getCameras()).thenThrow(
+        const AppException.network('Sem conexao'),
+      );
+
+      expect(() => useCase(), throwsA(isA<AppException>()));
+    });
+  });
+}
+```
+
+### Data Layer
+
+#### Repository Tests
+```dart
+// test/unit/data/repositories/camera_repository_impl_test.dart
+void main() {
+  late CameraRepositoryImpl repository;
+  late MockCameraRemoteDataSource mockRemote;
+  late MockCameraLocalDataSource mockLocal;
+
+  setUp(() {
+    mockRemote = MockCameraRemoteDataSource();
+    mockLocal = MockCameraLocalDataSource();
+    repository = CameraRepositoryImpl(mockRemote, mockLocal);
+  });
+
+  group('CameraRepositoryImpl', () {
+    test('deve buscar cameras da API e cachear localmente', () async {
+      when(() => mockRemote.getCameras()).thenAnswer((_) async => [cameraDtoFixture]);
+      when(() => mockLocal.cacheCameras(any())).thenAnswer((_) async {});
+
+      final result = await repository.getCameras();
+
+      expect(result, hasLength(1));
+      verify(() => mockLocal.cacheCameras(any())).called(1);
+    });
+
+    test('deve retornar cache local quando API falha', () async {
+      when(() => mockRemote.getCameras()).thenThrow(
+        const AppException.network('Offline'),
+      );
+      when(() => mockLocal.getCachedCameras()).thenAnswer((_) async => [cameraFixture]);
+
+      final result = await repository.getCameras();
+
+      expect(result, hasLength(1));
+    });
+  });
+}
+```
+
+#### Mapper Tests
+```dart
+// test/unit/data/mappers/camera_mapper_test.dart
+void main() {
+  group('CameraMapper', () {
+    test('deve converter CameraDto para Camera corretamente', () {
+      final dto = CameraDto(
+        id: '123',
+        name: 'Camera Entrada',
+        status: 'active',
+        createdAt: '2025-01-15T10:30:00Z',
+      );
+
+      final entity = CameraMapper.toEntity(dto);
+
+      expect(entity.id, '123');
+      expect(entity.name, 'Camera Entrada');
+      expect(entity.status, CameraStatus.active);
+      expect(entity.createdAt, isA<DateTime>());
+    });
+
+    test('deve mapear status desconhecido para unknown', () {
+      final dto = CameraDto(id: '1', name: 'Cam', status: 'invalid_status');
+
+      final entity = CameraMapper.toEntity(dto);
+
+      expect(entity.status, CameraStatus.unknown);
+    });
+  });
+}
+```
+
+### State Layer
+
+#### Notifier Tests
+```dart
+// test/unit/state/notifiers/camera_list_notifier_test.dart
+void main() {
+  group('CameraListNotifier', () {
+    late ProviderContainer container;
+    late MockCameraRepository mockRepository;
+
+    setUp(() {
+      mockRepository = MockCameraRepository();
+      container = ProviderContainer(overrides: [
+        cameraRepositoryProvider.overrideWithValue(mockRepository),
+      ]);
+    });
+
+    tearDown(() => container.dispose());
+
+    test('deve carregar cameras no build', () async {
+      when(() => mockRepository.getCameras()).thenAnswer(
+        (_) async => [cameraFixture],
+      );
+
+      // Wait for the async build to complete
+      await container.read(cameraListProvider.future);
+
+      final state = container.read(cameraListProvider);
+      expect(state.value, hasLength(1));
+    });
+
+    test('deve atualizar estado para loading durante refresh', () async {
+      when(() => mockRepository.getCameras()).thenAnswer(
+        (_) async => [],
+      );
+
+      final notifier = container.read(cameraListProvider.notifier);
+      await notifier.refresh();
+
+      expect(container.read(cameraListProvider).hasValue, isTrue);
+    });
+  });
+}
+```
+
+## Widget Tests
+
+### Design System Widgets
+```dart
+// test/widget/widgets/zy_button_test.dart
+void main() {
+  group('ZyButton', () {
+    testWidgets('deve renderizar com texto correto', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ZyButton(
+              label: 'Salvar',
+              onPressed: () {},
+            ),
+          ),
+        ),
+      );
+
+      expect(find.text('Salvar'), findsOneWidget);
+    });
+
+    testWidgets('deve chamar onPressed ao clicar', (tester) async {
+      var pressed = false;
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ZyButton(
+              label: 'Salvar',
+              onPressed: () => pressed = true,
+            ),
+          ),
+        ),
+      );
+
+      await tester.tap(find.byType(ZyButton));
+      expect(pressed, isTrue);
+    });
+
+    testWidgets('deve estar desabilitado quando onPressed e null', (tester) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: Scaffold(
+            body: ZyButton(
+              label: 'Salvar',
+              onPressed: null,
+            ),
+          ),
+        ),
+      );
+
+      final button = tester.widget<ElevatedButton>(find.byType(ElevatedButton));
+      expect(button.onPressed, isNull);
+    });
+
+    testWidgets('deve mostrar spinner quando isLoading e true', (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: ZyButton(
+              label: 'Salvar',
+              onPressed: () {},
+              isLoading: true,
+            ),
+          ),
+        ),
+      );
+
+      expect(find.byType(CircularProgressIndicator), findsOneWidget);
+      expect(find.text('Salvar'), findsNothing);
+    });
+  });
+}
+```
+
+### Page Tests
+```dart
+// test/widget/pages/camera_list_page_test.dart
+void main() {
+  group('CameraListPage', () {
+    testWidgets('deve mostrar lista de cameras', (tester) async {
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            cameraListProvider.overrideWith(() => FakeCameraListNotifier([
+              Camera(id: '1', name: 'Camera Entrada', status: CameraStatus.active),
+              Camera(id: '2', name: 'Camera Garagem', status: CameraStatus.offline),
+            ])),
+          ],
+          child: const MaterialApp(home: CameraListPage()),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      expect(find.text('Camera Entrada'), findsOneWidget);
+      expect(find.text('Camera Garagem'), findsOneWidget);
+    });
+
+    testWidgets('deve mostrar estado vazio quando nao ha cameras', (tester) async {
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            cameraListProvider.overrideWith(() => FakeCameraListNotifier([])),
+          ],
+          child: const MaterialApp(home: CameraListPage()),
+        ),
+      );
+
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ZyEmptyState), findsOneWidget);
+    });
+  });
+}
+```
+
+## Integration Tests
+
+```dart
+// test/integration/auth_flow_test.dart
+void main() {
+  group('Fluxo de Autenticacao', () {
+    testWidgets('deve fazer login e navegar para o dashboard', (tester) async {
+      // Setup mock API server or override providers
+      await tester.pumpWidget(const ProviderScope(child: ZyraVisionApp()));
+
+      // Find and fill login fields
+      await tester.enterText(find.byKey(const Key('email_field')), 'user@test.com');
+      await tester.enterText(find.byKey(const Key('password_field')), 'password123');
+      await tester.tap(find.byKey(const Key('login_button')));
+
+      await tester.pumpAndSettle();
+
+      // Verify navigation to dashboard
+      expect(find.byType(DashboardPage), findsOneWidget);
+    });
+  });
+}
+```
+
+## Mocking Strategy
+
+### Use mocktail (not mockito)
+```dart
+import 'package:mocktail/mocktail.dart';
+
+// Mocks
+class MockCameraRepository extends Mock implements CameraRepository {}
+class MockDio extends Mock implements Dio {}
+class MockSecureStorage extends Mock implements FlutterSecureStorage {}
+
+// Fakes (for registerFallbackValue)
+class FakeCamera extends Fake implements Camera {}
+class FakeRequestOptions extends Fake implements RequestOptions {}
+```
+
+### JSON Fixtures
+Store API response fixtures in `test/fixtures/` as JSON files:
+```
+test/fixtures/
+├── cameras.json
+├── camera_detail.json
+├── user_profile.json
+├── paginated_cameras.json
+└── auth_token_response.json
+```
+
+Load in tests:
+```dart
+Future<Map<String, dynamic>> loadFixture(String name) async {
+  final file = File('test/fixtures/$name');
+  return jsonDecode(await file.readAsString()) as Map<String, dynamic>;
+}
+```
+
+### Test Data Factories
+```dart
+// test/helpers/fake_data.dart
+class FakeData {
+  static Camera camera({
+    String id = '1',
+    String name = 'Camera Teste',
+    CameraStatus status = CameraStatus.active,
+  }) {
+    return Camera(id: id, name: name, status: status);
+  }
+
+  static User user({
+    String id = '1',
+    String name = 'Usuario Teste',
+    String email = 'teste@zyravision.com',
+  }) {
+    return User(id: id, name: name, email: email);
+  }
+}
+```
+
+## File Naming
+
+| Type | Pattern | Example |
+|------|---------|---------|
+| Unit test | `{file}_test.dart` | `camera_repository_impl_test.dart` |
+| Widget test | `{widget}_test.dart` | `zy_button_test.dart` |
+| Integration test | `{flow}_test.dart` | `auth_flow_test.dart` |
+| Fixture | `{entity}.json` | `cameras.json` |
+| Helper | `{purpose}.dart` | `mock_providers.dart` |
+
+## Running Tests
+
+```bash
+# All tests
+flutter test
+
+# With coverage
+flutter test --coverage
+
+# Specific file
+flutter test test/unit/domain/usecases/get_active_cameras_test.dart
+
+# Integration tests (on device/emulator)
+flutter test integration_test/
+```
+
+## Rules
+
+- NEVER skip tests for domain entities and use cases — they are the business core.
+- NEVER use real API calls in unit or widget tests — always mock the data layer.
+- NEVER leave test descriptions in English — use Portuguese for consistency.
+- ALWAYS use `mocktail` for mocking (not `mockito`).
+- ALWAYS create test data via factory methods in `test/helpers/fake_data.dart`.
+- ALWAYS store JSON fixtures in `test/fixtures/` — never inline large JSON in tests.
+- ALWAYS test both success and error paths in repository and notifier tests.
+- ALWAYS test loading, data, and error states in widget tests for async data.
+- ALWAYS override Riverpod providers in widget tests — never rely on real implementations.
+- ALWAYS run `flutter test --coverage` before submitting a PR and verify targets are met.

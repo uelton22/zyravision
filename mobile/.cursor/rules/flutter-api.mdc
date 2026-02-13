@@ -1,0 +1,327 @@
+---
+name: flutter-api
+description: API integration rules — Dio configuration, interceptors, auth flow, pagination, caching, and error handling.
+---
+# ZyraVision Mobile — API Integration
+
+## Overview
+The mobile app communicates with the ZyraVision Laravel 11 backend via a REST API at `/api/v1/`. Authentication uses Laravel Sanctum with Bearer tokens. All API code lives in the Data layer (`lib/data/`).
+
+## Base Configuration
+
+### Environment
+```dart
+// Base URL loaded from environment at build time
+// .env.development: API_BASE_URL=https://dev-api.zyravision.com
+// .env.staging:     API_BASE_URL=https://staging-api.zyravision.com
+// .env.production:  API_BASE_URL=https://api.zyravision.com
+
+const apiBaseUrl = String.fromEnvironment('API_BASE_URL');
+```
+
+### Timeouts
+| Timeout | Duration | Purpose |
+|---------|----------|---------|
+| Connect | 10 seconds | TCP connection establishment |
+| Receive | 30 seconds | Standard API response |
+| Send | 30 seconds | Upload requests |
+| Stream | 120 seconds | Video stream / long-running downloads |
+
+### Dio Instance
+```dart
+final dioProvider = Provider<Dio>((ref) {
+  final dio = Dio(BaseOptions(
+    baseUrl: '$apiBaseUrl/api/v1',
+    connectTimeout: const Duration(seconds: 10),
+    receiveTimeout: const Duration(seconds: 30),
+    sendTimeout: const Duration(seconds: 30),
+    headers: {
+      'Accept': 'application/json',
+      'Content-Type': 'application/json',
+    },
+  ));
+
+  dio.interceptors.addAll([
+    ref.read(authInterceptorProvider),
+    ref.read(mobileHeadersInterceptorProvider),
+    ref.read(retryInterceptorProvider),
+    ref.read(etagCacheInterceptorProvider),
+    ref.read(errorInterceptorProvider),
+    if (kDebugMode) ref.read(loggingInterceptorProvider),
+  ]);
+
+  return dio;
+});
+```
+
+## Interceptors
+
+### 1. Auth Interceptor
+- Adds `Authorization: Bearer {token}` to every request.
+- Reads token from `flutter_secure_storage`.
+
+```dart
+class AuthInterceptor extends Interceptor {
+  @override
+  void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
+    final token = _tokenStore.accessToken;
+    if (token != null) {
+      options.headers['Authorization'] = 'Bearer $token';
+    }
+    handler.next(options);
+  }
+}
+```
+
+### 2. Token Refresh on 401
+- On 401 response, attempt to refresh the token.
+- Queue all pending requests while refresh is in progress.
+- Retry queued requests with the new token.
+- If refresh fails, clear auth state and redirect to login.
+
+```dart
+@override
+void onError(DioException err, ErrorInterceptorHandler handler) async {
+  if (err.response?.statusCode == 401 && !_isRefreshing) {
+    _isRefreshing = true;
+    try {
+      final newToken = await _refreshToken();
+      _tokenStore.setAccessToken(newToken);
+      // Retry the original request
+      final retryResponse = await _retry(err.requestOptions, newToken);
+      handler.resolve(retryResponse);
+      // Retry queued requests
+      _retryQueuedRequests(newToken);
+    } catch (_) {
+      _clearAuthAndRedirect();
+      handler.next(err);
+    } finally {
+      _isRefreshing = false;
+    }
+  } else if (err.response?.statusCode == 401 && _isRefreshing) {
+    // Queue this request to retry after refresh completes
+    _queueRequest(err.requestOptions, handler);
+  } else {
+    handler.next(err);
+  }
+}
+```
+
+### 3. Mobile Headers Interceptor
+Adds device-specific headers to every request.
+
+```dart
+class MobileHeadersInterceptor extends Interceptor {
+  @override
+  void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
+    options.headers.addAll({
+      'X-Device-Id': _deviceInfo.deviceId,       // Unique device identifier
+      'X-App-Version': _packageInfo.version,      // e.g., "1.2.3"
+      'X-Platform': Platform.isIOS ? 'ios' : 'android',
+    });
+    handler.next(options);
+  }
+}
+```
+
+### 4. Retry Interceptor
+- Retries failed requests up to **3 attempts**.
+- Retry on: network errors, 408 (timeout), 429 (rate limit), 500+ (server errors).
+- Exponential backoff: 1s, 2s, 4s.
+- Do NOT retry: 400, 401, 403, 404, 422.
+
+### 5. Logging Interceptor
+- Active in **debug mode only** (`kDebugMode`).
+- Logs: method, URL, status code, duration.
+- NEVER logs: Authorization header value, request/response bodies in production.
+
+### 6. Error Interceptor
+Maps Dio errors to typed `AppException` hierarchy.
+
+```dart
+class ErrorInterceptor extends Interceptor {
+  @override
+  void onError(DioException err, ErrorInterceptorHandler handler) {
+    final exception = switch (err.type) {
+      DioExceptionType.connectionTimeout => const AppException.network('Tempo de conexao esgotado'),
+      DioExceptionType.receiveTimeout => const AppException.network('Servidor demorou para responder'),
+      DioExceptionType.connectionError => const AppException.network('Sem conexao com a internet'),
+      _ => _mapResponseError(err.response),
+    };
+    handler.next(err.copyWith(error: exception));
+  }
+
+  AppException _mapResponseError(Response? response) {
+    return switch (response?.statusCode) {
+      400 => AppException.badRequest(response?.data['message'] ?? 'Requisicao invalida'),
+      401 => const AppException.unauthorized('Sessao expirada'),
+      403 => const AppException.forbidden('Sem permissao para esta acao'),
+      404 => const AppException.notFound('Recurso nao encontrado'),
+      422 => AppException.validation(_parseValidationErrors(response?.data)),
+      429 => const AppException.rateLimited('Muitas requisicoes. Aguarde um momento.'),
+      _ => AppException.server('Erro no servidor (${response?.statusCode})'),
+    };
+  }
+}
+```
+
+## Response Format
+
+### Standard Envelope
+The Laravel API returns responses in this format:
+```json
+{
+  "data": { ... },
+  "meta": { ... }
+}
+```
+
+### List / Paginated Response
+```json
+{
+  "data": [ ... ],
+  "meta": {
+    "current_page": 1,
+    "per_page": 15,
+    "total": 47,
+    "last_page": 4
+  }
+}
+```
+
+### Pagination Model
+```dart
+@freezed
+class PaginatedResponse<T> with _$PaginatedResponse<T> {
+  const factory PaginatedResponse({
+    required List<T> data,
+    required int currentPage,
+    required int perPage,
+    required int total,
+    required int lastPage,
+  }) = _PaginatedResponse<T>;
+}
+```
+
+## Query Parameters
+
+### Sparse Fieldsets
+Request only the fields you need to reduce payload size:
+```
+GET /api/v1/cameras?fields=id,name,status,thumbnail_url
+```
+
+### Filtering
+```
+GET /api/v1/cameras?filter[status]=active&filter[manufacturer]=hikvision
+```
+
+### Sorting
+```
+GET /api/v1/cameras?sort=-created_at   (descending)
+GET /api/v1/cameras?sort=name           (ascending)
+```
+
+### Pagination
+```
+GET /api/v1/cameras?page=2&per_page=15
+```
+
+### Include Relations
+```
+GET /api/v1/cameras?include=stream,location
+```
+
+## ETag Caching
+
+### Strategy
+- Store ETag from response headers.
+- Send `If-None-Match` on subsequent requests.
+- On 304 Not Modified, return cached data.
+- Reduces bandwidth and improves perceived performance.
+
+```dart
+class EtagCacheInterceptor extends Interceptor {
+  final Map<String, String> _etagStore = {};
+  final Map<String, Response> _responseCache = {};
+
+  @override
+  void onRequest(RequestOptions options, RequestInterceptorHandler handler) {
+    final etag = _etagStore[options.uri.toString()];
+    if (etag != null) {
+      options.headers['If-None-Match'] = etag;
+    }
+    handler.next(options);
+  }
+
+  @override
+  void onResponse(Response response, ResponseInterceptorHandler handler) {
+    final etag = response.headers.value('etag');
+    if (etag != null) {
+      _etagStore[response.requestOptions.uri.toString()] = etag;
+      _responseCache[response.requestOptions.uri.toString()] = response;
+    }
+    handler.next(response);
+  }
+
+  @override
+  void onError(DioException err, ErrorInterceptorHandler handler) {
+    if (err.response?.statusCode == 304) {
+      final cached = _responseCache[err.requestOptions.uri.toString()];
+      if (cached != null) {
+        handler.resolve(cached);
+        return;
+      }
+    }
+    handler.next(err);
+  }
+}
+```
+
+## Data Source Pattern
+
+```dart
+// lib/data/datasources/remote/camera_remote_data_source.dart
+class CameraRemoteDataSource {
+  final Dio _dio;
+
+  CameraRemoteDataSource(this._dio);
+
+  Future<PaginatedResponse<CameraDto>> getCameras({
+    int page = 1,
+    int perPage = 15,
+    String? status,
+    String? search,
+    String? sort,
+    List<String>? fields,
+  }) async {
+    final response = await _dio.get('/cameras', queryParameters: {
+      'page': page,
+      'per_page': perPage,
+      if (status != null) 'filter[status]': status,
+      if (search != null) 'filter[search]': search,
+      if (sort != null) 'sort': sort,
+      if (fields != null) 'fields': fields.join(','),
+    });
+
+    return PaginatedResponse.fromJson(
+      response.data,
+      (json) => CameraDto.fromJson(json as Map<String, dynamic>),
+    );
+  }
+}
+```
+
+## Rules
+
+- NEVER hardcode the API base URL — always read from environment.
+- NEVER store tokens in SharedPreferences — use `flutter_secure_storage`.
+- NEVER log sensitive data (tokens, passwords) even in debug mode.
+- NEVER retry 401/403/422 responses — they require user action.
+- ALWAYS use the standard response envelope (`data` + `meta`).
+- ALWAYS map Dio errors to typed `AppException` for consistent error handling.
+- ALWAYS send mobile headers (`X-Device-Id`, `X-App-Version`, `X-Platform`).
+- ALWAYS implement token refresh with request queuing to avoid race conditions.
+- ALWAYS use sparse fieldsets when the UI only needs a subset of fields.
+- ALWAYS handle pagination with the `PaginatedResponse` model.
+- ALWAYS use ETag caching for frequently accessed, rarely changing data.

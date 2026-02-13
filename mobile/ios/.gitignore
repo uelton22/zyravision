@@ -1,0 +1,56 @@
+# ═══════════════════════════════════════════════════════════════
+# ZyraVision Mobile — iOS .gitignore
+# ═══════════════════════════════════════════════════════════════
+
+# ─── Xcode ─────────────────────────────────────────────────
+**/dgph
+*.mode1v3
+*.mode2v3
+*.moved-aside
+*.pbxuser
+*.perspectivev3
+**/*sync/
+.sconsign.dblite
+.tags*
+**/.vagrant/
+**/DerivedData/
+Icon?
+**/Pods/
+**/.symlinks/
+profile
+xcuserdata
+**/.generated/
+
+# ─── Flutter Framework ─────────────────────────────────────
+Flutter/App.framework
+Flutter/Flutter.framework
+Flutter/Flutter.podspec
+Flutter/Generated.xcconfig
+Flutter/ephemeral/
+Flutter/app.flx
+Flutter/app.zip
+Flutter/flutter_assets/
+Flutter/flutter_export_environment.sh
+ServiceDefinitions.json
+Runner/GeneratedPluginRegistrant.*
+
+# ─── CocoaPods ─────────────────────────────────────────────
+# O Podfile.lock DEVE ser commitado para builds reprodutiveis
+Pods/
+
+# ─── Firebase (se adicionado no futuro) ────────────────────
+# Descomente quando usar Firebase:
+# Runner/GoogleService-Info.plist
+# firebase_app_id_file.json
+
+# ─── Certificados e Provisioning (SENSIVEL) ────────────────
+*.mobileprovision
+*.p12
+*.cer
+*.certSigningRequest
+
+# ─── Xcode Exceptions ─────────────────────────────────────
+!default.mode1v3
+!default.mode2v3
+!default.pbxuser
+!default.perspectivev3

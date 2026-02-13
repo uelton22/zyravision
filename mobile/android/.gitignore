@@ -1,0 +1,37 @@
+# ═══════════════════════════════════════════════════════════════
+# ZyraVision Mobile — Android .gitignore
+# ═══════════════════════════════════════════════════════════════
+
+# ─── Gradle ────────────────────────────────────────────────
+gradle-wrapper.jar
+/.gradle
+/captures/
+/gradlew
+/gradlew.bat
+
+# ─── Local Properties (SENSIVEL - contem paths do SDK local)
+/local.properties
+
+# ─── Plugin auto-generated ─────────────────────────────────
+GeneratedPluginRegistrant.java
+
+# ─── NDK / CMake ───────────────────────────────────────────
+.cxx/
+.externalNativeBuild/
+
+# ─── Keystore e Assinatura (SENSIVEL) ─────────────────────
+# NUNCA commitar keystores ou arquivos de assinatura
+key.properties
+**/*.keystore
+**/*.jks
+*.p12
+
+# ─── Firebase (se adicionado no futuro) ────────────────────
+# Descomente quando usar Firebase:
+# app/google-services.json
+
+# ─── Build outputs ─────────────────────────────────────────
+**/build/
+
+# ─── Proguard ──────────────────────────────────────────────
+**/proguard-rules.pro.bak

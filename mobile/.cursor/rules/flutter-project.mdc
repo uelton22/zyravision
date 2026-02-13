@@ -1,0 +1,71 @@
+---
+name: flutter-project
+description: Main project context for ZyraVision Mobile — always applied to every file in the Flutter project.
+---
+# ZyraVision Mobile — Project Context
+
+## Project Overview
+- **Product**: ZyraVision Mobile — companion app for the ZyraVision CFTV/Video Surveillance SaaS platform.
+- **Purpose**: Real-time camera monitoring, playback, alerts, and device management from mobile devices.
+- **Multi-tenant**: All data is scoped by `tenant_id`. Never expose cross-tenant data.
+
+## Tech Stack
+- **Framework**: Flutter 3.x (latest stable)
+- **Language**: Dart 3.x with null safety
+- **State Management**: Riverpod 2.x (exclusively)
+- **HTTP Client**: Dio 5.x with interceptors
+- **Routing**: GoRouter (declarative, deep-link ready)
+- **Local Storage**: Hive (encrypted boxes for sensitive data)
+- **Code Generation**: freezed + json_serializable + build_runner
+- **Video**: better_player / video_player (HLS), flutter_webrtc (WebRTC)
+
+## Backend Integration
+- **Backend**: Laravel 11 REST API
+- **Base Path**: `/api/v1/`
+- **Authentication**: Laravel Sanctum (Bearer token)
+- **API Format**: JSON with `{ data: {...}, meta: {...} }` envelope
+
+## Architecture
+Five-layer clean architecture:
+
+1. **UI** (`lib/ui/`) — Widgets, pages, design system components
+2. **Presentation** (`lib/presentation/`) — ViewModels, UI logic, formatting
+3. **State** (`lib/state/`) — Riverpod providers, notifiers, state objects
+4. **Domain** (`lib/domain/`) — Entities (freezed), repository interfaces, use cases
+5. **Data** (`lib/data/`) — API clients, repository implementations, DTOs, mappers
+
+## Streaming
+- **HLS**: Primary protocol for live monitoring (2-5s latency)
+- **WebRTC**: Ultra-low latency (<1s) for critical real-time events
+- **Adaptive Quality**: Auto-switch resolution based on network conditions
+
+## Design System
+- All reusable widgets use the `Zy` prefix (e.g., `ZyButton`, `ZyCard`, `ZyTextField`).
+- Matches the web application design language and color palette.
+
+## Mandatory Rules
+
+### NEVER
+- NEVER use `setState()` directly — always use Riverpod providers.
+- NEVER put business logic in the UI layer — delegate to use cases and notifiers.
+- NEVER hardcode colors, spacing, or typography — use theme tokens (`ZyColors`, `ZySpacing`, `ZyTypography`).
+- NEVER store tokens in SharedPreferences — use `flutter_secure_storage`.
+- NEVER log sensitive data (tokens, passwords, personal information).
+- NEVER import Data layer from Domain layer (dependency inversion).
+
+### ALWAYS
+- ALWAYS use `freezed` for domain entities (immutable, copyWith, equality).
+- ALWAYS use `json_serializable` for data-layer DTOs / API models.
+- ALWAYS handle loading, error, and data states via `AsyncValue`.
+- ALWAYS scope data by `tenant_id` — never assume a global context.
+- ALWAYS dispose resources (streams, controllers, players) properly.
+
+## Language Conventions
+- **User-facing text**: Portuguese (pt-BR). All labels, messages, and UI strings in Portuguese.
+- **Code**: English. All variable names, class names, comments, and documentation in English.
+
+## File Naming
+- Files: `snake_case.dart`
+- Classes: `PascalCase`
+- Variables / functions: `camelCase`
+- Constants: `camelCase` (Dart convention) or `SCREAMING_SNAKE_CASE` for env keys

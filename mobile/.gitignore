@@ -1,0 +1,93 @@
+# ═══════════════════════════════════════════════════════════════
+# ZyraVision Mobile — .gitignore
+# ═══════════════════════════════════════════════════════════════
+
+# ─── Miscellaneous ──────────────────────────────────────────
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# ─── IntelliJ / Android Studio ─────────────────────────────
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# ─── VS Code ───────────────────────────────────────────────
+# Descomente se quiser ignorar configs do VSCode
+#.vscode/
+
+# ─── Flutter / Dart / Pub ──────────────────────────────────
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+/build/
+.metadata
+
+# NOTA: Arquivos *.g.dart e *.freezed.dart sao gerados pelo
+# build_runner, mas sao COMMITADOS no repositorio para que
+# outros devs nao precisem rodar build_runner apos clone.
+
+# ─── Symbolication ─────────────────────────────────────────
+app.*.symbols
+
+# ─── Obfuscation ───────────────────────────────────────────
+app.*.map.json
+
+# ─── Android Studio build artifacts ────────────────────────
+/android/app/debug
+/android/app/profile
+/android/app/release
+
+# ─── Arquivos de Ambiente (SENSIVEL) ───────────────────────
+# Nunca commitar arquivos de ambiente com secrets
+*.env
+.env.*
+!.env.example
+
+# ─── Chaves e Certificados (SENSIVEL) ─────────────────────
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+*.key
+*.crt
+*.cer
+
+# ─── Firebase (se adicionado no futuro) ────────────────────
+# google-services.json contém API keys do Firebase
+# Descomente quando usar Firebase:
+# android/app/google-services.json
+# ios/Runner/GoogleService-Info.plist
+# firebase_app_id_file.json
+
+# ─── Testes e Cobertura ────────────────────────────────────
+coverage/
+*.lcov
+.test_coverage/
+
+# ─── Crash Logs ────────────────────────────────────────────
+crash_log_*.json
+
+# ─── OS / Sistema ──────────────────────────────────────────
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+*~
+*.tmp
+*.temp
+*.cache

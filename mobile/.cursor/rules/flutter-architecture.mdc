@@ -1,0 +1,173 @@
+---
+name: flutter-architecture
+description: Architecture rules enforcing the 5-layer clean architecture, dependency direction, and folder conventions.
+---
+# ZyraVision Mobile — Architecture Rules
+
+## 5-Layer Architecture
+
+```
+UI  -->  Presentation  -->  State  -->  Domain  <--  Data
+```
+
+### Layer Responsibilities
+
+| Layer | Location | Responsibility | Depends On |
+|-------|----------|----------------|------------|
+| **UI** | `lib/ui/` | Widgets, pages, design system, navigation | Presentation, State |
+| **Presentation** | `lib/presentation/` | ViewModels, UI formatting, input validation | State, Domain |
+| **State** | `lib/state/` | Riverpod providers, notifiers, reactive state | Domain |
+| **Domain** | `lib/domain/` | Entities, repository interfaces, use cases | Nothing (innermost) |
+| **Data** | `lib/data/` | API clients, repository impls, DTOs, mappers, local storage | Domain |
+
+## Dependency Rules
+
+### CRITICAL: Dependency Inversion
+- **Domain layer NEVER imports from Data layer.** Domain defines repository interfaces; Data implements them.
+- **UI layer NEVER imports from Data layer directly.** Access data through State/Presentation layers.
+- **Data layer imports from Domain** to implement repository interfaces and map DTOs to entities.
+- **State layer bridges Domain and Data** via dependency injection (Riverpod providers).
+
+### Import Constraints
+```
+lib/ui/         → CAN import: presentation/, state/, domain/, core/
+lib/presentation/ → CAN import: state/, domain/, core/
+lib/state/      → CAN import: domain/, data/ (for DI wiring only), core/
+lib/domain/     → CAN import: core/ (NOTHING else)
+lib/data/       → CAN import: domain/, core/
+```
+
+## Folder Structure
+
+```
+lib/
+├── core/                          # Cross-cutting concerns
+│   ├── config/                    # App configuration, env
+│   ├── constants/                 # App-wide constants
+│   ├── errors/                    # AppException hierarchy
+│   ├── extensions/                # Dart extension methods
+│   ├── theme/                     # ZyColors, ZyTypography, ZySpacing
+│   └── utils/                     # Pure utility functions
+│
+├── data/                          # Data layer
+│   ├── datasources/
+│   │   ├── remote/                # API clients (Dio-based)
+│   │   └── local/                 # Hive DAOs, secure storage
+│   ├── dtos/                      # JSON-serializable data transfer objects
+│   ├── mappers/                   # DTO ↔ Entity mappers
+│   └── repositories/              # Repository implementations
+│
+├── domain/                        # Domain layer (pure Dart, no Flutter)
+│   ├── entities/                  # freezed immutable entities
+│   ├── repositories/              # Abstract repository interfaces
+│   ├── usecases/                  # Business use case classes
+│   └── enums/                     # Domain enumerations
+│
+├── state/                         # State layer (Riverpod)
+│   ├── auth/                      # Auth providers, notifiers
+│   ├── cameras/                   # Camera providers, notifiers
+│   ├── streaming/                 # Stream providers, notifiers
+│   ├── tenants/                   # Tenant providers
+│   └── shared/                    # Shared / cross-feature providers
+│
+├── presentation/                  # Presentation layer
+│   ├── viewmodels/                # ViewModel classes per feature
+│   └── formatters/                # Display formatters (dates, status, etc.)
+│
+├── ui/                            # UI layer
+│   ├── widgets/                   # Zy* Design System widgets
+│   ├── pages/                     # Feature pages (screens)
+│   │   ├── auth/
+│   │   ├── dashboard/
+│   │   ├── cameras/
+│   │   ├── streaming/
+│   │   ├── alerts/
+│   │   ├── recordings/
+│   │   ├── settings/
+│   │   └── profile/
+│   ├── layouts/                   # Scaffold layouts, app shell
+│   └── dialogs/                   # Shared dialogs, bottom sheets
+│
+├── router/                        # GoRouter configuration
+│   ├── app_router.dart
+│   └── guards/                    # Route guards (auth, role)
+│
+└── main.dart                      # App entry point
+```
+
+## Design Patterns
+
+### Repository Pattern
+- **Interface** in `domain/repositories/` — defines the contract.
+- **Implementation** in `data/repositories/` — handles API calls, caching, mapping.
+- Wired together in State layer via Riverpod provider.
+
+```dart
+// domain/repositories/camera_repository.dart
+abstract class CameraRepository {
+  Future<List<Camera>> getCameras();
+  Future<Camera> getCameraById(String id);
+}
+
+// data/repositories/camera_repository_impl.dart
+class CameraRepositoryImpl implements CameraRepository {
+  final CameraRemoteDataSource _remote;
+  final CameraLocalDataSource _local;
+  // ...
+}
+
+// state/cameras/camera_providers.dart
+final cameraRepositoryProvider = Provider<CameraRepository>((ref) {
+  return CameraRepositoryImpl(
+    ref.watch(cameraRemoteDataSourceProvider),
+    ref.watch(cameraLocalDataSourceProvider),
+  );
+});
+```
+
+### Use Case Pattern
+- One public `call()` method per use case.
+- Encapsulates a single business operation.
+- Located in `domain/usecases/`.
+
+```dart
+class GetActiveCameras {
+  final CameraRepository _repository;
+
+  GetActiveCameras(this._repository);
+
+  Future<List<Camera>> call() async {
+    final cameras = await _repository.getCameras();
+    return cameras.where((c) => c.status == CameraStatus.active).toList();
+  }
+}
+```
+
+### ViewModel Pattern
+- Located in `presentation/viewmodels/`.
+- Transforms domain entities into display-ready data.
+- Contains UI-specific logic (formatting, sorting, filtering for display).
+
+## File Naming Conventions
+
+| Type | Pattern | Example |
+|------|---------|---------|
+| Entity | `{name}.dart` | `camera.dart` |
+| DTO | `{name}_dto.dart` | `camera_dto.dart` |
+| Mapper | `{name}_mapper.dart` | `camera_mapper.dart` |
+| Repository Interface | `{name}_repository.dart` | `camera_repository.dart` |
+| Repository Impl | `{name}_repository_impl.dart` | `camera_repository_impl.dart` |
+| Use Case | `{verb}_{noun}.dart` | `get_active_cameras.dart` |
+| Provider | `{feature}_providers.dart` | `camera_providers.dart` |
+| Notifier | `{feature}_notifier.dart` | `camera_list_notifier.dart` |
+| Page | `{feature}_page.dart` | `camera_list_page.dart` |
+| Widget | `zy_{name}.dart` | `zy_button.dart` |
+| Test | `{file}_test.dart` | `camera_repository_impl_test.dart` |
+
+## Rules
+
+- NEVER create God classes. Each class has a single responsibility.
+- NEVER skip the mapper step — DTOs and entities are always separate.
+- ALWAYS create a use case for non-trivial business logic, even if it wraps a single repository call (enables future composition).
+- ALWAYS keep the Domain layer free of Flutter imports — pure Dart only.
+- ALWAYS group files by feature within each layer when the feature grows beyond 3 files.

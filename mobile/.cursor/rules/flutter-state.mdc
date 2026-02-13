@@ -1,0 +1,240 @@
+---
+name: flutter-state
+description: State management rules — Riverpod 2.x patterns, provider types, caching, and error handling.
+---
+# ZyraVision Mobile — State Management
+
+## Overview
+All state management uses **Riverpod 2.x** exclusively. No `setState`, no `ChangeNotifier`, no `Bloc`. Riverpod provides compile-safe, testable, and composable reactive state.
+
+## Provider Types
+
+### When to Use Each Provider
+
+| Provider Type | Use Case | Example |
+|---------------|----------|---------|
+| `Provider` | Computed/derived values, DI wiring | Repository instance, formatted string |
+| `FutureProvider` | One-shot async data fetch | User profile, tenant config |
+| `StreamProvider` | Reactive stream of data | WebSocket events, connectivity status |
+| `NotifierProvider` | Synchronous mutable state with logic | Theme mode toggle, filter state |
+| `AsyncNotifierProvider` | Async mutable state with logic | Camera list with CRUD, auth state |
+
+### Deprecated — Do NOT Use
+- `StateProvider` — Use `NotifierProvider` instead.
+- `StateNotifier` / `StateNotifierProvider` — Use `Notifier` / `AsyncNotifier` instead.
+- `ChangeNotifierProvider` — Never use in this project.
+
+## Provider Conventions
+
+### File Organization
+```
+lib/state/
+├── auth/
+│   ├── auth_providers.dart          # Provider declarations
+│   ├── auth_notifier.dart           # AsyncNotifier for auth state
+│   └── auth_state.dart              # freezed state class
+├── cameras/
+│   ├── camera_providers.dart
+│   ├── camera_list_notifier.dart
+│   └── camera_list_state.dart
+├── streaming/
+│   ├── streaming_providers.dart
+│   ├── player_notifier.dart
+│   └── player_state.dart
+└── shared/
+    ├── connectivity_provider.dart
+    └── app_lifecycle_provider.dart
+```
+
+### Naming Conventions
+```dart
+// Providers: camelCase + "Provider" suffix
+final cameraListProvider = AsyncNotifierProvider<CameraListNotifier, List<Camera>>(...);
+final currentUserProvider = FutureProvider<User>(...);
+final authStateProvider = NotifierProvider<AuthNotifier, AuthState>(...);
+
+// Family providers: add "Family" before "Provider" or use .family
+final cameraDetailProvider = FutureProvider.family<Camera, String>((ref, id) => ...);
+
+// Notifiers: PascalCase, descriptive name
+class CameraListNotifier extends AsyncNotifier<List<Camera>> { ... }
+class AuthNotifier extends Notifier<AuthState> { ... }
+```
+
+## Auto-Dispose
+
+### Default: Always Auto-Dispose
+```dart
+// PREFERRED: Use @riverpod annotation (code-gen) which auto-disposes by default.
+// If writing manually, use .autoDispose:
+final cameraListProvider = FutureProvider.autoDispose<List<Camera>>((ref) async {
+  final repo = ref.watch(cameraRepositoryProvider);
+  return repo.getCameras();
+});
+```
+
+### Keep Alive (Exceptions)
+Only keep providers alive when the data is:
+- Truly global (auth state, tenant config, connectivity)
+- Expensive to recreate and needed throughout the app lifetime
+
+```dart
+final authStateProvider = NotifierProvider<AuthNotifier, AuthState>((ref) {
+  return AuthNotifier();
+});
+// Auth state intentionally NOT auto-disposed — lives for app lifetime.
+```
+
+## AsyncValue Pattern
+
+### ALWAYS Use AsyncValue for Async Data in UI
+```dart
+// In the widget
+Widget build(BuildContext context, WidgetRef ref) {
+  final camerasAsync = ref.watch(cameraListProvider);
+
+  return camerasAsync.when(
+    data: (cameras) => CameraGrid(cameras: cameras),
+    loading: () => const ZyLoadingIndicator(),
+    error: (error, stack) => ZyErrorWidget(
+      message: _mapErrorMessage(error),
+      onRetry: () => ref.invalidate(cameraListProvider),
+    ),
+  );
+}
+```
+
+### Error Mapping
+```dart
+String _mapErrorMessage(Object error) {
+  if (error is AppException) {
+    return error.userMessage; // Portuguese user-facing message
+  }
+  return 'Ocorreu um erro inesperado. Tente novamente.';
+}
+```
+
+## Notifier Patterns
+
+### AsyncNotifier for CRUD Operations
+```dart
+class CameraListNotifier extends AsyncNotifier<List<Camera>> {
+  @override
+  Future<List<Camera>> build() async {
+    final repo = ref.watch(cameraRepositoryProvider);
+    return repo.getCameras();
+  }
+
+  Future<void> refresh() async {
+    state = const AsyncLoading();
+    state = await AsyncValue.guard(() => ref.read(cameraRepositoryProvider).getCameras());
+  }
+
+  Future<void> deleteCamera(String id) async {
+    final repo = ref.read(cameraRepositoryProvider);
+    await repo.deleteCamera(id);
+    // Optimistic update
+    state = AsyncData(
+      state.value?.where((c) => c.id != id).toList() ?? [],
+    );
+  }
+}
+```
+
+### Notifier for Synchronous State
+```dart
+class CameraFilterNotifier extends Notifier<CameraFilter> {
+  @override
+  CameraFilter build() => const CameraFilter();
+
+  void setStatus(CameraStatus? status) {
+    state = state.copyWith(status: status);
+  }
+
+  void setSearchQuery(String query) {
+    state = state.copyWith(searchQuery: query);
+  }
+
+  void reset() {
+    state = const CameraFilter();
+  }
+}
+```
+
+## Family Providers
+
+### Parameterized Queries
+```dart
+// Single camera by ID
+final cameraDetailProvider = FutureProvider.autoDispose.family<Camera, String>(
+  (ref, cameraId) async {
+    final repo = ref.watch(cameraRepositoryProvider);
+    return repo.getCameraById(cameraId);
+  },
+);
+
+// Usage in widget
+final cameraAsync = ref.watch(cameraDetailProvider(cameraId));
+```
+
+## Cache Invalidation
+
+### Strategies
+```dart
+// 1. Invalidate a specific provider (triggers rebuild)
+ref.invalidate(cameraListProvider);
+
+// 2. Invalidate after mutation
+Future<void> createCamera(CreateCameraRequest request) async {
+  await ref.read(cameraRepositoryProvider).createCamera(request);
+  ref.invalidate(cameraListProvider); // Refresh the list
+}
+
+// 3. Timer-based refresh (for dashboard data)
+final dashboardProvider = FutureProvider.autoDispose<DashboardData>((ref) async {
+  final timer = Timer(const Duration(minutes: 1), () {
+    ref.invalidateSelf();
+  });
+  ref.onDispose(timer.cancel);
+  return ref.read(dashboardRepositoryProvider).getData();
+});
+
+// 4. Refresh on app resume
+final appLifecycleProvider = StreamProvider<AppLifecycleState>((ref) {
+  // Stream from WidgetsBindingObserver
+});
+```
+
+## State Classes (freezed)
+
+```dart
+@freezed
+class CameraFilter with _$CameraFilter {
+  const factory CameraFilter({
+    CameraStatus? status,
+    @Default('') String searchQuery,
+    @Default(SortOrder.nameAsc) SortOrder sortOrder,
+  }) = _CameraFilter;
+}
+
+@freezed
+class AuthState with _$AuthState {
+  const factory AuthState.unauthenticated() = _Unauthenticated;
+  const factory AuthState.authenticating() = _Authenticating;
+  const factory AuthState.authenticated({required User user}) = _Authenticated;
+  const factory AuthState.error({required String message}) = _AuthError;
+}
+```
+
+## Rules
+
+- NEVER use `setState()` — always use Riverpod providers.
+- NEVER use `StateNotifier` or `StateNotifierProvider` — they are deprecated. Use `Notifier` / `AsyncNotifier`.
+- NEVER read providers inside `build()` when you need reactivity — use `ref.watch()`.
+- NEVER perform side effects in `ref.watch()` callbacks — use `ref.listen()` instead.
+- ALWAYS auto-dispose providers by default. Only keep alive for truly global state.
+- ALWAYS use `AsyncValue.when()` or `.whenOrNull()` to render async data in the UI.
+- ALWAYS use `AsyncValue.guard()` to catch errors in async notifiers.
+- ALWAYS invalidate dependent providers after mutations (create, update, delete).
+- ALWAYS define state classes with `freezed` for immutability and pattern matching.
+- ALWAYS test notifiers independently by overriding their dependencies.

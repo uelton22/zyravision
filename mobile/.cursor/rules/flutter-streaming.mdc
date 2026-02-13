@@ -1,0 +1,272 @@
+---
+name: flutter-streaming
+description: Video streaming rules — HLS, LL-HLS, WebRTC, adaptive quality, PiP, background playback, and player state management.
+---
+# ZyraVision Mobile — Video Streaming
+
+## Overview
+The mobile app supports real-time camera monitoring via two protocols:
+- **HLS / LL-HLS**: Primary protocol for standard monitoring (2-5s latency).
+- **WebRTC**: Ultra-low latency (<1s) for critical real-time events.
+
+The streaming backend is MediaMTX v1.16.1 proxied through Nginx.
+
+## Protocols
+
+### HLS (Primary)
+- **Package**: `better_player` (preferred) or `video_player`
+- **Latency**: Standard HLS ~6-10s, LL-HLS ~2-5s
+- **URL Pattern**: `https://{host}/hls/cam_{uuid}_{slug}/index.m3u8`
+- **Auth**: Basic Auth header passed through Nginx proxy
+- **Segment Count**: LL-HLS requires `hlsSegmentCount >= 7`
+- **Part Duration**: 500ms for 16fps cameras
+
+```dart
+// HLS player initialization
+final controller = BetterPlayerController(
+  BetterPlayerConfiguration(
+    autoPlay: true,
+    looping: false,
+    controlsConfiguration: BetterPlayerControlsConfiguration(
+      enableSkips: false,
+      enablePlaybackSpeed: false,
+    ),
+  ),
+  betterPlayerDataSource: BetterPlayerDataSource(
+    BetterPlayerDataSourceType.network,
+    hlsUrl,
+    headers: {
+      'Authorization': 'Basic ${base64Encode(utf8.encode('$user:$pass'))}',
+    },
+    liveStream: true,
+    videoFormat: BetterPlayerVideoFormat.hls,
+  ),
+);
+```
+
+### WebRTC (Ultra-Low Latency)
+- **Package**: `flutter_webrtc`
+- **Latency**: <1s
+- **Use Case**: Critical events, PTZ camera control, two-way audio
+- **Signaling**: WebSocket connection to MediaMTX
+- **STUN/TURN**: Configure for NAT traversal
+
+```dart
+// WebRTC connection flow
+// 1. Create peer connection
+// 2. Negotiate SDP with MediaMTX signaling endpoint
+// 3. Handle ICE candidates
+// 4. Render remote stream in RTCVideoRenderer
+```
+
+## Adaptive Quality
+
+### Network-Based Limits
+
+| Network | Max Resolution | Max Streams | Bitrate Cap |
+|---------|---------------|-------------|-------------|
+| 3G / slow | 480p (SD) | 1 stream | 1 Mbps |
+| 4G / LTE | 720p (HD) | 2 streams | 4 Mbps |
+| WiFi | 1080p (FHD) | 4 streams | 10 Mbps |
+| WiFi (5GHz) | 1080p (FHD) | 6 streams | 20 Mbps |
+
+### Implementation Strategy
+```dart
+// Monitor connectivity and adjust quality
+final networkQualityProvider = StreamProvider<NetworkQuality>((ref) {
+  return ConnectivityService.networkQualityStream;
+});
+
+// Player auto-adjusts based on network quality
+class AdaptiveStreamManager {
+  void onNetworkChanged(NetworkQuality quality) {
+    switch (quality) {
+      case NetworkQuality.poor:
+        _limitResolution(480);
+        _limitConcurrentStreams(1);
+        break;
+      case NetworkQuality.moderate:
+        _limitResolution(720);
+        _limitConcurrentStreams(2);
+        break;
+      case NetworkQuality.good:
+        _limitResolution(1080);
+        _limitConcurrentStreams(4);
+        break;
+      case NetworkQuality.excellent:
+        _limitResolution(1080);
+        _limitConcurrentStreams(6);
+        break;
+    }
+  }
+}
+```
+
+### Bandwidth Detection
+- Measure download speed on app startup and periodically.
+- Use HLS variant playlist to auto-select appropriate quality.
+- Expose manual quality override in player UI.
+
+## Player State Management
+
+### State Model
+```dart
+@freezed
+class PlayerState with _$PlayerState {
+  const factory PlayerState.idle() = _Idle;
+  const factory PlayerState.connecting({required String cameraId}) = _Connecting;
+  const factory PlayerState.buffering({required String cameraId}) = _Buffering;
+  const factory PlayerState.playing({
+    required String cameraId,
+    required StreamProtocol protocol,
+    required VideoQuality quality,
+  }) = _Playing;
+  const factory PlayerState.paused({required String cameraId}) = _Paused;
+  const factory PlayerState.error({
+    required String cameraId,
+    required String message,
+  }) = _Error;
+  const factory PlayerState.disposed() = _Disposed;
+}
+```
+
+### Player Notifier
+```dart
+class PlayerNotifier extends Notifier<PlayerState> {
+  @override
+  PlayerState build() => const PlayerState.idle();
+
+  Future<void> startStream(String cameraId, StreamProtocol protocol) async {
+    state = PlayerState.connecting(cameraId: cameraId);
+    try {
+      // Initialize player based on protocol
+      // ...
+      state = PlayerState.playing(
+        cameraId: cameraId,
+        protocol: protocol,
+        quality: _currentQuality,
+      );
+    } catch (e) {
+      state = PlayerState.error(
+        cameraId: cameraId,
+        message: _mapStreamError(e),
+      );
+    }
+  }
+
+  void stopStream() {
+    _disposeCurrentPlayer();
+    state = const PlayerState.idle();
+  }
+}
+```
+
+### Multi-Stream Grid Provider
+```dart
+// Manages multiple concurrent players (grid view)
+final activeStreamsProvider = NotifierProvider<ActiveStreamsNotifier, Map<String, PlayerState>>(
+  ActiveStreamsNotifier.new,
+);
+```
+
+## Picture-in-Picture (PiP)
+
+### Android
+- Use `floating` or native PiP via platform channels.
+- Enter PiP when navigating away from player page.
+- Show camera name and status in PiP overlay.
+- Minimum size: 240x135 (16:9).
+
+### iOS
+- Use `AVPictureInPictureController` via platform channel.
+- Requires `Background Modes: Audio, AirPlay, and Picture in Picture` capability.
+- Only works with a single stream.
+
+### Implementation
+```dart
+class PipController {
+  /// Enter PiP mode if supported
+  Future<void> enterPip() async {
+    if (await isPipSupported()) {
+      await _platform.invokeMethod('enterPip', {
+        'aspectRatio': [16, 9],
+      });
+    }
+  }
+
+  /// Check if device supports PiP
+  Future<bool> isPipSupported() async {
+    return await _platform.invokeMethod<bool>('isPipSupported') ?? false;
+  }
+}
+```
+
+## Background Playback
+
+### Persistent Notification
+- When the user leaves the app while streaming, show a persistent notification.
+- Notification displays: camera name, status (live), and controls (stop).
+- Use a foreground service (Android) to keep the stream alive.
+
+### Audio-Only Mode
+- For bandwidth savings, offer audio-only background mode.
+- Useful for two-way audio monitoring.
+
+## Reconnection Strategy
+
+### Auto-Reconnect
+- On stream interruption, attempt reconnection automatically.
+- Backoff schedule: 1s, 2s, 4s, 8s, 16s (max 5 attempts).
+- Show reconnecting UI state during attempts.
+- After max attempts, show error with manual retry button.
+
+```dart
+class StreamReconnector {
+  static const maxAttempts = 5;
+
+  Future<void> reconnect(String cameraId) async {
+    for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        await _connect(cameraId);
+        return; // Success
+      } catch (_) {
+        if (attempt < maxAttempts) {
+          await Future.delayed(Duration(seconds: math.pow(2, attempt).toInt()));
+        }
+      }
+    }
+    throw const AppException.stream('Nao foi possivel reconectar. Verifique sua conexao.');
+  }
+}
+```
+
+## Resource Management
+
+### Player Lifecycle
+- Initialize player only when the widget is visible.
+- Pause/stop when widget goes off-screen (e.g., scrolled out of grid).
+- Dispose player controller on widget disposal.
+- Release system resources (decoders, GPU surfaces) promptly.
+
+### Memory Management
+- Limit decoded frame buffer size.
+- Monitor memory usage; reduce quality if pressure is high.
+- In grid view, only decode visible cells; pause off-screen streams.
+
+### Battery Optimization
+- Reduce frame rate when battery is below 20%.
+- Offer "low power mode" with 15fps and 480p cap.
+- Disable background streaming when battery is below 10%.
+
+## Rules
+
+- NEVER render a video frame before the player is fully initialized and data is available.
+- NEVER allow more concurrent streams than the network-based limit.
+- NEVER leave a player controller undisposed — always clean up.
+- NEVER play streams in background without a foreground service (Android) or background mode (iOS).
+- ALWAYS manage player state via Riverpod — never use widget-local state.
+- ALWAYS implement auto-reconnection with exponential backoff.
+- ALWAYS adapt quality based on current network conditions.
+- ALWAYS show clear loading/buffering/error states to the user.
+- ALWAYS handle app lifecycle transitions (pause, resume, detach) for players.
+- ALWAYS prefer HLS for standard monitoring; reserve WebRTC for critical low-latency needs.
