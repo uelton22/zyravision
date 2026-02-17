@@ -140,7 +140,7 @@ class StreamController extends Controller
                     'error_message' => $errorStream->error_message,
                     'hls_url' => $errorStream->hls_url,
                     'webrtc_url' => $errorStream->webrtc_url,
-                    'recovery_attempt' => $errorStream->metadata['recovery_attempt'] ?? 0,
+                    'hard_reset_count' => $errorStream->metadata['hard_reset_count'] ?? 0,
                 ],
             ]);
         }

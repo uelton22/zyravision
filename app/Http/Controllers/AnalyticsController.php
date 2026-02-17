@@ -323,12 +323,13 @@ class AnalyticsController extends Controller
             ->get();
 
         foreach ($errorStreams as $stream) {
+            $cameraName = $stream->camera?->name ?? 'Camera removida';
             $events[] = [
                 'id' => $stream->id . '-error',
                 'event_type' => 'stream_error',
                 'severity' => 'warning',
-                'description' => "Stream de {$stream->camera->name} com erro: " . ($stream->error_message ?? 'desconhecido'),
-                'camera_name' => $stream->camera->name ?? 'N/A',
+                'description' => "Stream de {$cameraName} com erro: " . ($stream->error_message ?? 'desconhecido'),
+                'camera_name' => $cameraName,
                 'occurred_at' => ($stream->updated_at ?? now())->toIso8601String(),
                 'is_resolved' => false,
             ];

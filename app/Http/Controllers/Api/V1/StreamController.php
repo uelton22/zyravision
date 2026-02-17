@@ -127,7 +127,7 @@ class StreamController extends Controller
                 'reconnecting' => true,
                 'camera_online' => false,
                 'stream' => new StreamResource($errorStream),
-                'recovery_attempt' => $errorStream->metadata['recovery_attempt'] ?? 0,
+                'hard_reset_count' => $errorStream->metadata['hard_reset_count'] ?? 0,
             ]);
         }
 

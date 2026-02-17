@@ -23,7 +23,7 @@ interface StreamInfo {
         started_at: string | null;
         uptime_seconds: number;
         error_message?: string | null;
-        recovery_attempt?: number;
+        hard_reset_count?: number;
         mediamtx?: {
             ready: boolean;
             readers: number;
@@ -465,8 +465,8 @@ onBeforeUnmount(() => {
                         <p v-if="streamInfo?.stream?.error_message" class="text-yellow-300/80 text-xs max-w-sm text-center">
                             {{ streamInfo.stream.error_message }}
                         </p>
-                        <p v-if="streamInfo?.stream?.recovery_attempt" class="text-white/50 text-xs">
-                            Tentativa de recuperacao #{{ streamInfo.stream.recovery_attempt }}
+                        <p v-if="streamInfo?.stream?.hard_reset_count" class="text-white/50 text-xs">
+                            Hard reset #{{ streamInfo.stream.hard_reset_count }}
                         </p>
                         <ZyButton variant="secondary" size="sm" class="mt-2" :disabled="streamLoading" @click="forceRestart">
                             <ArrowPathIcon class="h-4 w-4" />
@@ -535,9 +535,9 @@ onBeforeUnmount(() => {
                     <div v-if="streamInfo.stream.error_message" class="p-2 rounded-zy bg-danger-50 dark:bg-danger-900/20 border border-danger-200 dark:border-danger-800">
                         <p class="text-body-sm text-danger-600 dark:text-danger-400">{{ streamInfo.stream.error_message }}</p>
                     </div>
-                    <div v-if="streamInfo.stream.recovery_attempt" class="flex items-center justify-between">
-                        <span class="text-body-sm text-dark-500">Tentativa de recuperacao</span>
-                        <span class="text-body-sm font-mono text-warning-500">#{{ streamInfo.stream.recovery_attempt }}</span>
+                    <div v-if="streamInfo.stream.hard_reset_count" class="flex items-center justify-between">
+                        <span class="text-body-sm text-dark-500">Hard resets realizados</span>
+                        <span class="text-body-sm font-mono text-warning-500">#{{ streamInfo.stream.hard_reset_count }}</span>
                     </div>
                     <div v-if="streamUptime" class="flex items-center justify-between">
                         <span class="text-body-sm text-dark-500">Tempo ativo</span>

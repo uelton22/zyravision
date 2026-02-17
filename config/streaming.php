@@ -48,48 +48,50 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Auto-Recovery Configuration (Self-Healing)
+    | Auto-Recovery Configuration (Self-Healing) — v2
     |--------------------------------------------------------------------------
     |
-    | Controls how the system automatically recovers from stream failures.
-    | The system NEVER permanently gives up — it uses progressive strategies:
+    | Monitoramento baseado em saude (inspirado no NUV):
     |
-    | Phase 1 (Soft Recovery): Re-register path or wait for MediaMTX reconnect
-    |   - Fast backoff (30s–120s) for transient network issues
+    | 1. Stream saudavel: ready=true OU bytesReceived aumentando
+    | 2. Stream nao pronto: espera MediaMTX reconectar sozinho (tolerancia)
+    | 3. Apos tolerancia: hard reset (remove + re-add path) — direto, sem editPath
+    | 4. Hard resets agressivos a cada 90s ate 5x, depois modo manutencao (5 min)
     |
-    | Phase 2 (Hard Reset): Remove path + re-add (like manual "Force Reset")
-    |   - Triggered after soft_attempts_before_hard_reset soft failures
-    |   - Clears any stuck state in MediaMTX
+    | O SISTEMA NUNCA DESISTE — sempre tenta recuperar.
     |
-    | Phase 3 (Maintenance Mode): Slow periodic hard resets indefinitely
-    |   - Runs every maintenance_interval_seconds
-    |   - Keeps trying until camera comes back online
-    |   - No human intervention required
+    | TIMELINE: Not-ready → 90s → Hard Reset → 90s → HR#2 → 90s → HR#3 → ...
+    |           Apos 5 HRs → 5min → HR#6 → 5min → HR#7 → ...
+    |
+    | DIFERENCIAIS vs v1:
+    | - SEM editPath "soft recovery" (ineficaz e interfere no MediaMTX)
+    | - SEM sleep() no job (nao bloqueia o worker)
+    | - Camera marcada offline so apos 60s (nao imediatamente)
+    | - Monitoramento por bytesReceived (detecta stale connections)
+    | - readTimeout=30s no MediaMTX (mais tolerancia a hiccups)
     |
     */
 
     'recovery' => [
-        // Phase 1: Soft recovery (re-register path, wait for MediaMTX)
-        // Backoff: 30s, 45s, 60s, 90s, 120s (max)
-        'soft_max_attempts' => (int) env('STREAM_SOFT_MAX_ATTEMPTS', 5),
-        'soft_initial_backoff_seconds' => 30,
-        'soft_max_backoff_seconds' => 120,
+        // Tolerancia: segundos que o sistema espera MediaMTX reconectar sozinho
+        // ANTES de fazer o primeiro hard reset. Cameras com rede instavel
+        // se beneficiam de valores maiores. Padrao: 90s.
+        'tolerance_before_reset_seconds' => (int) env('STREAM_TOLERANCE_SECONDS', 90),
 
-        // Phase 2: Hard reset (remove + re-add path, like "Force Reset")
-        // How many soft attempts must fail before trying a hard reset
-        'soft_attempts_before_hard_reset' => (int) env('STREAM_SOFT_BEFORE_HARD_RESET', 3),
-        'hard_max_attempts' => (int) env('STREAM_HARD_MAX_ATTEMPTS', 3),
-        'hard_reset_cooldown_seconds' => 60,
+        // Intervalo entre hard resets na fase agressiva (primeiros 5 resets)
+        // Padrao: 90s — rapido o suficiente para recuperacao eficaz
+        'aggressive_reset_interval_seconds' => (int) env('STREAM_RESET_INTERVAL', 90),
 
-        // Phase 3: Maintenance mode (slow periodic hard resets, never gives up)
+        // Apos quantos hard resets entrar em modo manutencao (intervalo maior)
+        'maintenance_after_resets' => (int) env('STREAM_MAINTENANCE_AFTER_RESETS', 5),
+
+        // Intervalo entre hard resets no modo manutencao
+        // Para cameras que ficam desligadas por horas (ex: queda de energia)
         'maintenance_interval_seconds' => (int) env('STREAM_MAINTENANCE_INTERVAL', 300),
 
-        // How many monitor checks (30s each) a path can be "not ready"
-        // before marking as error and triggering recovery
-        'not_ready_checks_before_error' => (int) env('STREAM_NOT_READY_CHECKS', 6),
-
-        // Delay in seconds after removing a path before re-adding it
-        'hard_reset_delay_seconds' => 3,
+        // Segundos de not-ready antes de marcar camera como offline no UI
+        // Hiccups breves (< 60s) NAO marcam a camera como offline
+        'offline_after_seconds' => (int) env('STREAM_OFFLINE_AFTER_SECONDS', 60),
     ],
 
     /*
