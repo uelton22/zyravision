@@ -23,7 +23,13 @@ mixin _$DashboardStats {
   int get recordingCameras => throw _privateConstructorUsedError;
   int get activeStreams => throw _privateConstructorUsedError;
   double get storageUsedGb => throw _privateConstructorUsedError;
-  double get storageTotalGb => throw _privateConstructorUsedError;
+  double get storageTotalGb =>
+      throw _privateConstructorUsedError; // Admin-only stats
+  int get totalDevices => throw _privateConstructorUsedError;
+  int get devicesOnline => throw _privateConstructorUsedError;
+  int get totalTenants => throw _privateConstructorUsedError;
+  int get tenantsActive => throw _privateConstructorUsedError;
+  int get totalUsers => throw _privateConstructorUsedError;
 
   /// Create a copy of DashboardStats
   /// with the given fields replaced by the non-null parameter values.
@@ -47,6 +53,11 @@ abstract class $DashboardStatsCopyWith<$Res> {
     int activeStreams,
     double storageUsedGb,
     double storageTotalGb,
+    int totalDevices,
+    int devicesOnline,
+    int totalTenants,
+    int tenantsActive,
+    int totalUsers,
   });
 }
 
@@ -72,6 +83,11 @@ class _$DashboardStatsCopyWithImpl<$Res, $Val extends DashboardStats>
     Object? activeStreams = null,
     Object? storageUsedGb = null,
     Object? storageTotalGb = null,
+    Object? totalDevices = null,
+    Object? devicesOnline = null,
+    Object? totalTenants = null,
+    Object? tenantsActive = null,
+    Object? totalUsers = null,
   }) {
     return _then(
       _value.copyWith(
@@ -110,6 +126,31 @@ class _$DashboardStatsCopyWithImpl<$Res, $Val extends DashboardStats>
                     ? _value.storageTotalGb
                     : storageTotalGb // ignore: cast_nullable_to_non_nullable
                         as double,
+            totalDevices:
+                null == totalDevices
+                    ? _value.totalDevices
+                    : totalDevices // ignore: cast_nullable_to_non_nullable
+                        as int,
+            devicesOnline:
+                null == devicesOnline
+                    ? _value.devicesOnline
+                    : devicesOnline // ignore: cast_nullable_to_non_nullable
+                        as int,
+            totalTenants:
+                null == totalTenants
+                    ? _value.totalTenants
+                    : totalTenants // ignore: cast_nullable_to_non_nullable
+                        as int,
+            tenantsActive:
+                null == tenantsActive
+                    ? _value.tenantsActive
+                    : tenantsActive // ignore: cast_nullable_to_non_nullable
+                        as int,
+            totalUsers:
+                null == totalUsers
+                    ? _value.totalUsers
+                    : totalUsers // ignore: cast_nullable_to_non_nullable
+                        as int,
           )
           as $Val,
     );
@@ -133,6 +174,11 @@ abstract class _$$DashboardStatsImplCopyWith<$Res>
     int activeStreams,
     double storageUsedGb,
     double storageTotalGb,
+    int totalDevices,
+    int devicesOnline,
+    int totalTenants,
+    int tenantsActive,
+    int totalUsers,
   });
 }
 
@@ -157,6 +203,11 @@ class __$$DashboardStatsImplCopyWithImpl<$Res>
     Object? activeStreams = null,
     Object? storageUsedGb = null,
     Object? storageTotalGb = null,
+    Object? totalDevices = null,
+    Object? devicesOnline = null,
+    Object? totalTenants = null,
+    Object? tenantsActive = null,
+    Object? totalUsers = null,
   }) {
     return _then(
       _$DashboardStatsImpl(
@@ -195,6 +246,31 @@ class __$$DashboardStatsImplCopyWithImpl<$Res>
                 ? _value.storageTotalGb
                 : storageTotalGb // ignore: cast_nullable_to_non_nullable
                     as double,
+        totalDevices:
+            null == totalDevices
+                ? _value.totalDevices
+                : totalDevices // ignore: cast_nullable_to_non_nullable
+                    as int,
+        devicesOnline:
+            null == devicesOnline
+                ? _value.devicesOnline
+                : devicesOnline // ignore: cast_nullable_to_non_nullable
+                    as int,
+        totalTenants:
+            null == totalTenants
+                ? _value.totalTenants
+                : totalTenants // ignore: cast_nullable_to_non_nullable
+                    as int,
+        tenantsActive:
+            null == tenantsActive
+                ? _value.tenantsActive
+                : tenantsActive // ignore: cast_nullable_to_non_nullable
+                    as int,
+        totalUsers:
+            null == totalUsers
+                ? _value.totalUsers
+                : totalUsers // ignore: cast_nullable_to_non_nullable
+                    as int,
       ),
     );
   }
@@ -211,6 +287,11 @@ class _$DashboardStatsImpl extends _DashboardStats {
     this.activeStreams = 0,
     this.storageUsedGb = 0.0,
     this.storageTotalGb = 0.0,
+    this.totalDevices = 0,
+    this.devicesOnline = 0,
+    this.totalTenants = 0,
+    this.tenantsActive = 0,
+    this.totalUsers = 0,
   }) : super._();
 
   @override
@@ -234,10 +315,26 @@ class _$DashboardStatsImpl extends _DashboardStats {
   @override
   @JsonKey()
   final double storageTotalGb;
+  // Admin-only stats
+  @override
+  @JsonKey()
+  final int totalDevices;
+  @override
+  @JsonKey()
+  final int devicesOnline;
+  @override
+  @JsonKey()
+  final int totalTenants;
+  @override
+  @JsonKey()
+  final int tenantsActive;
+  @override
+  @JsonKey()
+  final int totalUsers;
 
   @override
   String toString() {
-    return 'DashboardStats(totalCameras: $totalCameras, onlineCameras: $onlineCameras, offlineCameras: $offlineCameras, recordingCameras: $recordingCameras, activeStreams: $activeStreams, storageUsedGb: $storageUsedGb, storageTotalGb: $storageTotalGb)';
+    return 'DashboardStats(totalCameras: $totalCameras, onlineCameras: $onlineCameras, offlineCameras: $offlineCameras, recordingCameras: $recordingCameras, activeStreams: $activeStreams, storageUsedGb: $storageUsedGb, storageTotalGb: $storageTotalGb, totalDevices: $totalDevices, devicesOnline: $devicesOnline, totalTenants: $totalTenants, tenantsActive: $tenantsActive, totalUsers: $totalUsers)';
   }
 
   @override
@@ -258,7 +355,17 @@ class _$DashboardStatsImpl extends _DashboardStats {
             (identical(other.storageUsedGb, storageUsedGb) ||
                 other.storageUsedGb == storageUsedGb) &&
             (identical(other.storageTotalGb, storageTotalGb) ||
-                other.storageTotalGb == storageTotalGb));
+                other.storageTotalGb == storageTotalGb) &&
+            (identical(other.totalDevices, totalDevices) ||
+                other.totalDevices == totalDevices) &&
+            (identical(other.devicesOnline, devicesOnline) ||
+                other.devicesOnline == devicesOnline) &&
+            (identical(other.totalTenants, totalTenants) ||
+                other.totalTenants == totalTenants) &&
+            (identical(other.tenantsActive, tenantsActive) ||
+                other.tenantsActive == tenantsActive) &&
+            (identical(other.totalUsers, totalUsers) ||
+                other.totalUsers == totalUsers));
   }
 
   @override
@@ -271,6 +378,11 @@ class _$DashboardStatsImpl extends _DashboardStats {
     activeStreams,
     storageUsedGb,
     storageTotalGb,
+    totalDevices,
+    devicesOnline,
+    totalTenants,
+    tenantsActive,
+    totalUsers,
   );
 
   /// Create a copy of DashboardStats
@@ -294,6 +406,11 @@ abstract class _DashboardStats extends DashboardStats {
     final int activeStreams,
     final double storageUsedGb,
     final double storageTotalGb,
+    final int totalDevices,
+    final int devicesOnline,
+    final int totalTenants,
+    final int tenantsActive,
+    final int totalUsers,
   }) = _$DashboardStatsImpl;
   const _DashboardStats._() : super._();
 
@@ -310,7 +427,17 @@ abstract class _DashboardStats extends DashboardStats {
   @override
   double get storageUsedGb;
   @override
-  double get storageTotalGb;
+  double get storageTotalGb; // Admin-only stats
+  @override
+  int get totalDevices;
+  @override
+  int get devicesOnline;
+  @override
+  int get totalTenants;
+  @override
+  int get tenantsActive;
+  @override
+  int get totalUsers;
 
   /// Create a copy of DashboardStats
   /// with the given fields replaced by the non-null parameter values.

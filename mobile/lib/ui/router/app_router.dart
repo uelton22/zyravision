@@ -5,7 +5,13 @@ import 'package:go_router/go_router.dart';
 import '../../state/auth/auth_notifier.dart';
 import '../../state/auth/auth_providers.dart';
 import '../screens/auth/login_screen.dart';
+import '../screens/cameras/camera_detail_screen.dart';
+import '../screens/cameras/camera_list_screen.dart';
+import '../screens/cameras/live_view_screen.dart';
+import '../screens/cameras/multi_view_screen.dart';
 import '../screens/dashboard/dashboard_screen.dart';
+import '../screens/recordings/recording_list_screen.dart';
+import '../screens/recordings/recording_playback_screen.dart';
 import '../screens/splash/splash_screen.dart';
 import '../widgets/navigation/zy_bottom_nav.dart';
 import 'route_names.dart';
@@ -74,13 +80,59 @@ final routerProvider = Provider<GoRouter>((ref) {
           ),
           GoRoute(
             path: RouteNames.cameras,
-            builder: (context, state) =>
-                const _PlaceholderScreen(title: 'Cameras'),
+            builder: (context, state) => const CameraListScreen(),
+            routes: [
+              GoRoute(
+                path: 'multi-view',
+                parentNavigatorKey: null,
+                builder: (context, state) {
+                  final ids = state.uri.queryParameters['ids']?.split(',') ?? [];
+                  return MultiViewScreen(cameraIds: ids);
+                },
+              ),
+              GoRoute(
+                path: ':id',
+                builder: (context, state) {
+                  final id = state.pathParameters['id']!;
+                  return CameraDetailScreen(cameraId: id);
+                },
+                routes: [
+                  GoRoute(
+                    path: 'live',
+                    builder: (context, state) {
+                      final id = state.pathParameters['id']!;
+                      final cameraName =
+                          state.uri.queryParameters['name'] ?? 'Camera';
+                      return LiveViewScreen(
+                        cameraId: id,
+                        cameraName: cameraName,
+                      );
+                    },
+                  ),
+                ],
+              ),
+            ],
           ),
           GoRoute(
             path: RouteNames.recordings,
-            builder: (context, state) =>
-                const _PlaceholderScreen(title: 'Gravacoes'),
+            builder: (context, state) => const RecordingListScreen(),
+            routes: [
+              GoRoute(
+                path: ':cameraId/playback',
+                builder: (context, state) {
+                  final cameraId = state.pathParameters['cameraId']!;
+                  final recordingId =
+                      state.uri.queryParameters['recording'];
+                  final cameraName =
+                      state.uri.queryParameters['name'];
+                  return RecordingPlaybackScreen(
+                    cameraId: cameraId,
+                    recordingId: recordingId,
+                    cameraName: cameraName,
+                  );
+                },
+              ),
+            ],
           ),
           GoRoute(
             path: RouteNames.alerts,

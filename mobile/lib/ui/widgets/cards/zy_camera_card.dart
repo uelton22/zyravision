@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../core/theme/zy_colors.dart';
 import '../../../core/theme/zy_spacing.dart';
 import '../../../domain/entities/camera_summary.dart';
+import '../camera/zy_camera_live_preview.dart';
 import '../feedback/zy_badge.dart';
 
 class ZyCameraCard extends StatelessWidget {
@@ -40,21 +41,15 @@ class ZyCameraCard extends StatelessWidget {
         clipBehavior: Clip.antiAlias,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
           children: [
-            // Thumbnail
+            // Thumbnail com snapshot real da camera
             Stack(
               children: [
-                Container(
+                ZyCameraLivePreview(
+                  hlsPath: camera.hlsPath,
+                  isOnline: camera.isOnline,
                   height: thumbnailHeight,
-                  width: double.infinity,
-                  color: theme.colorScheme.surfaceContainerHighest,
-                  child: camera.snapshotUrl != null
-                      ? Image.network(
-                          camera.snapshotUrl!,
-                          fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) => _placeholderIcon(theme),
-                        )
-                      : _placeholderIcon(theme),
                 ),
                 // Badges
                 if (camera.isOnline)
@@ -100,7 +95,9 @@ class ZyCameraCard extends StatelessWidget {
                 children: [
                   Text(
                     camera.name,
-                    style: theme.textTheme.headlineSmall,
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -131,16 +128,6 @@ class ZyCameraCard extends StatelessWidget {
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _placeholderIcon(ThemeData theme) {
-    return Center(
-      child: Icon(
-        Icons.videocam_off_outlined,
-        size: 32,
-        color: theme.colorScheme.outline,
       ),
     );
   }

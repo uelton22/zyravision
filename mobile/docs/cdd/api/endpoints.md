@@ -94,45 +94,163 @@ Lista dispositivos do usuario.
 ## Dashboard
 
 ### GET /mobile/dashboard
-Dados consolidados do dashboard mobile.
+Dados consolidados do dashboard mobile. A resposta varia com base no role do usuario autenticado.
+
+**Response 200 (usuario tenant/comum):**
+```json
+{
+  "success": true,
+  "data": {
+    "role": "tenant",
+    "stats": {
+      "total_cameras": 5,
+      "online_cameras": 3,
+      "offline_cameras": 2,
+      "recording_cameras": 2,
+      "active_streams": 1,
+      "storage_used_gb": 12.5,
+      "storage_total_gb": 500
+    },
+    "quotas": {
+      "cameras": { "used": 5, "limit": 64 },
+      "users": { "used": 3, "limit": 10 },
+      "storage_gb": { "used": 12.5, "limit": 500 },
+      "streams": { "used": 1, "limit": 16 }
+    },
+    "plan": {
+      "name": "Professional",
+      "price": 497.00,
+      "billing_cycle": "monthly",
+      "max_cameras": 64,
+      "max_users": 10,
+      "max_storage_gb": 500,
+      "retention_days": 30,
+      "max_concurrent_streams": 16,
+      "max_resolution": "1080p",
+      "max_fps": 30,
+      "has_ai_detection": false,
+      "has_mobile_app": true,
+      "has_api_access": true
+    },
+    "cameras": ["... CameraResource collection ..."],
+    "recent_events": [
+      {
+        "id": "uuid",
+        "type": "recording_started",
+        "camera_id": "uuid",
+        "camera_name": "Entrada Principal",
+        "started_at": "2026-02-17T14:00:00.000Z",
+        "ended_at": null,
+        "duration_seconds": null
+      }
+    ],
+    "synced_at": "2026-02-17T14:05:00.000Z"
+  }
+}
+```
+
+**Response 200 (super-admin):**
+```json
+{
+  "success": true,
+  "data": {
+    "role": "super-admin",
+    "stats": {
+      "total_cameras": 50,
+      "online_cameras": 42,
+      "offline_cameras": 8,
+      "recording_cameras": 35,
+      "active_streams": 10,
+      "total_devices": 15,
+      "devices_online": 12,
+      "total_tenants": 3,
+      "tenants_active": 3,
+      "total_users": 25
+    },
+    "system_health": {
+      "cpu_load": [1.65, 2.62, 2.77],
+      "memory_usage_mb": 4.0,
+      "memory_peak_mb": 4.0,
+      "disk_total_gb": 1006.85,
+      "disk_free_gb": 886.26,
+      "disk_used_percent": 12.0,
+      "php_version": "8.4.17",
+      "laravel_version": "11.48.0",
+      "uptime": "3d 22h 13m"
+    },
+    "workers": {
+      "transcoder_count": 1,
+      "transcoder_healthy": 1,
+      "transcoder_capacity_percent": 0,
+      "queue_status": "running",
+      "queue_processes": 5,
+      "queue_jobs_pending": 0,
+      "queue_recent_failed": 52,
+      "alerts_count": 0
+    },
+    "cameras": ["... CameraResource collection (all tenants) ..."],
+    "recent_events": ["... events from all tenants ..."],
+    "synced_at": "2026-02-17T14:05:00.000Z"
+  }
+}
+```
+
+---
+
+## Gravacoes - Timeline & Segmentos
+
+### GET /cameras/recordings-summary
+Lista cameras que possuem gravacoes com resumo estatistico agrupado.
 
 **Response 200:**
 ```json
 {
-  "stats": {
-    "cameras_total": 50,
-    "cameras_online": 42,
-    "cameras_offline": 8,
-    "cameras_recording": 35,
-    "storage_used_gb": 450.5,
-    "storage_total_gb": 1000,
-    "storage_percentage": 45.05,
-    "alerts_today": 12,
-    "alerts_unread": 3
-  },
-  "recent_alerts": [
+  "data": [
     {
-      "id": "uuid",
-      "type": "camera_offline",
-      "severity": "warning",
-      "camera_name": "Estacionamento",
-      "message": "Camera perdeu conexao",
-      "created_at": "2024-01-15T14:32:00Z",
-      "read": false
-    }
-  ],
-  "cameras_favorites": [
-    {
-      "id": "uuid",
-      "name": "Entrada Principal",
-      "status": "online",
+      "camera_id": "uuid",
+      "camera_name": "Entrada Principal",
+      "camera_slug": "entrada-principal",
+      "camera_status": "active",
+      "is_online": true,
       "is_recording": true,
-      "snapshot_url": "/api/cameras/{id}/snapshot",
-      "stream_path": "cam_abc12345_entrada-principal"
+      "total_segments": 411,
+      "total_duration_seconds": 53803,
+      "total_duration_human": "14h 56m",
+      "total_hours": 14.9,
+      "total_size_bytes": 5380300000,
+      "total_size_human": "5.0 GB",
+      "total_days": 3,
+      "first_recording_at": "2026-02-13 14:27:54",
+      "last_recording_at": "2026-02-17 12:46:40"
     }
   ]
 }
 ```
+
+### GET /cameras/{camera}/timeline
+Retorna segmentos disponiveis para uma camera em um periodo.
+
+**Query Params:**
+| Param | Tipo | Default | Descricao |
+|-------|------|---------|-----------|
+| date | string | hoje | Data (YYYY-MM-DD) |
+
+### GET /cameras/{camera}/timeline/dates
+Retorna datas com gravacoes disponiveis para uma camera.
+
+### GET /cameras/{camera}/playback
+Retorna informacoes de segmento para playback em um timestamp especifico.
+
+**Query Params:**
+| Param | Tipo | Descricao |
+|-------|------|-----------|
+| time | string | Timestamp ISO 8601 |
+
+### GET /segments/{segment}/stream
+Stream de video MP4 de um segmento. Suporta byte-range.
+
+### GET /segments/{segment}/download
+Download de um segmento como arquivo MP4.
 
 ---
 

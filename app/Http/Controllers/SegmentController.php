@@ -21,6 +21,69 @@ class SegmentController extends Controller
     ) {}
 
     /**
+     * GET /api/v1/cameras/recordings-summary
+     *
+     * Return cameras that have recordings with summary stats.
+     * Used by the mobile app's recording list (camera-centric view).
+     */
+    public function camerasWithRecordings(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        $query = RecordingSegment::query()->available();
+
+        if (! $user->isSuperAdmin()) {
+            $query->where('tenant_id', $user->tenant_id);
+        }
+
+        $summaries = $query
+            ->selectRaw("
+                camera_id,
+                COUNT(*) as total_segments,
+                SUM(duration_seconds) as total_duration_seconds,
+                SUM(file_size_bytes) as total_size_bytes,
+                MIN(starts_at) as first_recording_at,
+                MAX(ends_at) as last_recording_at,
+                COUNT(DISTINCT DATE(starts_at)) as total_days
+            ")
+            ->groupBy('camera_id')
+            ->orderByDesc('last_recording_at')
+            ->get();
+
+        $cameraIds = $summaries->pluck('camera_id');
+        $cameras = Camera::whereIn('id', $cameraIds)->get()->keyBy('id');
+
+        $data = $summaries->map(function ($summary) use ($cameras) {
+            $camera = $cameras->get($summary->camera_id);
+            if (! $camera) {
+                return null;
+            }
+
+            $totalSeconds = (int) $summary->total_duration_seconds;
+            $totalHours = round($totalSeconds / 3600, 1);
+
+            return [
+                'camera_id' => $summary->camera_id,
+                'camera_name' => $camera->name,
+                'camera_slug' => $camera->slug,
+                'camera_status' => $camera->status,
+                'is_online' => $camera->is_online,
+                'is_recording' => $camera->is_recording,
+                'total_segments' => (int) $summary->total_segments,
+                'total_duration_seconds' => $totalSeconds,
+                'total_duration_human' => $this->formatDuration($totalSeconds),
+                'total_hours' => $totalHours,
+                'total_size_bytes' => (int) $summary->total_size_bytes,
+                'total_size_human' => $this->formatFileSize((int) $summary->total_size_bytes),
+                'total_days' => (int) $summary->total_days,
+                'first_recording_at' => $summary->first_recording_at,
+                'last_recording_at' => $summary->last_recording_at,
+            ];
+        })->filter()->values();
+
+        return response()->json(['data' => $data]);
+    }
+
+    /**
      * GET /api/cameras/{camera}/timeline
      *
      * Return available segments for a camera within a time range.
@@ -334,5 +397,29 @@ class SegmentController extends Controller
         if (! $user->isSuperAdmin() && $segment->tenant_id !== $user->tenant_id) {
             abort(403, 'Acesso negado.');
         }
+    }
+
+    private function formatDuration(int $seconds): string
+    {
+        $hours = intdiv($seconds, 3600);
+        $minutes = intdiv($seconds % 3600, 60);
+
+        if ($hours > 0) {
+            return sprintf('%dh %02dm', $hours, $minutes);
+        }
+
+        return sprintf('%dm', $minutes);
+    }
+
+    private function formatFileSize(int $bytes): string
+    {
+        if ($bytes >= 1073741824) {
+            return number_format($bytes / 1073741824, 1) . ' GB';
+        }
+        if ($bytes >= 1048576) {
+            return number_format($bytes / 1048576, 1) . ' MB';
+        }
+
+        return number_format($bytes / 1024, 0) . ' KB';
     }
 }

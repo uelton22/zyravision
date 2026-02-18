@@ -55,13 +55,12 @@ class StreamManager
 
         // Register path in MediaMTX with RTSP source
         // Use rtspTransport (not sourceProtocol) — this is the correct API field
-        // readTimeout/writeTimeout give MediaMTX more time before dropping the connection
+        // NOTE: readTimeout/writeTimeout are GLOBAL settings in mediamtx.yml,
+        // NOT per-path API fields. Sending them causes 400 "unknown field" error.
         $config = [
             'source' => $rtspUrl,
             'rtspTransport' => $camera->transport ?? 'tcp',
             'sourceOnDemand' => false,
-            'readTimeout' => '30s',
-            'writeTimeout' => '30s',
         ];
 
         $registered = $this->mediaMtxClient->addPath($path, $config);
@@ -238,13 +237,12 @@ class StreamManager
         usleep(500000);
 
         // Step 3: Re-register path with fresh RTSP connection
-        // Include readTimeout to give MediaMTX more time to connect to slow cameras
+        // NOTE: readTimeout/writeTimeout are GLOBAL settings in mediamtx.yml,
+        // NOT per-path API fields. Do NOT send them here.
         $config = [
             'source' => $rtspUrl,
             'rtspTransport' => $camera->transport ?? 'tcp',
             'sourceOnDemand' => false,
-            'readTimeout' => '30s',
-            'writeTimeout' => '30s',
         ];
 
         $registered = $this->mediaMtxClient->addPath($path, $config);

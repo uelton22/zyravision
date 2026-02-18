@@ -165,7 +165,10 @@ class MonitorStreamsJob implements ShouldQueue
             ]);
         }
 
-        $unhealthySeconds = (int) now()->diffInSeconds($notReadySince);
+        // IMPORTANT: abs() is required because Carbon 3 returns signed values
+        // from diffInSeconds(). Without abs(), the result would be negative
+        // (past dates produce negative diff) and time comparisons would break.
+        $unhealthySeconds = (int) abs(now()->diffInSeconds($notReadySince));
 
         // Set RECONNECTING status if not already in error/reconnecting
         if ($stream->status === Stream::STATUS_ACTIVE || $stream->status === Stream::STATUS_STARTING) {
@@ -196,7 +199,7 @@ class MonitorStreamsJob implements ShouldQueue
 
         // Check cooldown since last hard reset
         $resetInterval = $this->getResetInterval($hardResetCount);
-        $sinceLastReset = $lastHardReset ? (int) now()->diffInSeconds($lastHardReset) : PHP_INT_MAX;
+        $sinceLastReset = $lastHardReset ? (int) abs(now()->diffInSeconds($lastHardReset)) : PHP_INT_MAX;
 
         if ($sinceLastReset < $resetInterval) {
             Log::info("Monitor: stream {$stream->id} cooldown ({$sinceLastReset}s/{$resetInterval}s) antes do proximo reset.", [

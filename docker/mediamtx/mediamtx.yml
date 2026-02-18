@@ -54,6 +54,14 @@ srt: no
 playback: yes
 playbackAddress: :9996
 
+# ─── Connection Timeouts ─────────────────────
+# Tempo maior para cameras com rede instavel (padrao MediaMTX: 10s)
+# 30s evita que o MediaMTX drope a conexao em hiccups breves
+readTimeout: 30s
+writeTimeout: 30s
+# Buffer de escrita para leitores lentos (substitui readBufferCount deprecated)
+writeQueueSize: 2048
+
 # ─── Default Path Settings ──────────────────
 pathDefaults:
   source: publisher

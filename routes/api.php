@@ -39,7 +39,8 @@ Route::prefix('v1')->name('api.v1.')->group(function () {
         Route::put('/profile', [\App\Http\Controllers\Api\V1\ProfileController::class, 'update']);
         Route::put('/profile/password', [\App\Http\Controllers\Api\V1\ProfileController::class, 'updatePassword']);
 
-        // Cameras
+        // Cameras — static routes BEFORE apiResource to avoid {camera} capture
+        Route::get('/cameras/recordings-summary', [\App\Http\Controllers\SegmentController::class, 'camerasWithRecordings']);
         Route::apiResource('cameras', \App\Http\Controllers\Api\V1\CameraController::class);
         Route::get('/cameras/{camera}/thumbnail', [\App\Http\Controllers\Api\V1\CameraController::class, 'thumbnail']);
         Route::get('/cameras/{camera}/recordings', [\App\Http\Controllers\Api\V1\RecordingController::class, 'cameraRecordings']);
@@ -59,6 +60,13 @@ Route::prefix('v1')->name('api.v1.')->group(function () {
         Route::get('/recordings/{recording}/stream', [\App\Http\Controllers\Api\V1\RecordingController::class, 'stream']);
         Route::get('/recordings/{recording}/download', [\App\Http\Controllers\Api\V1\RecordingController::class, 'download']);
         Route::post('/recordings/{recording}/clip', [\App\Http\Controllers\Api\V1\RecordingController::class, 'clip']);
+
+        // Segments & Timeline (playback)
+        Route::get('/cameras/{camera}/timeline', [\App\Http\Controllers\SegmentController::class, 'timeline']);
+        Route::get('/cameras/{camera}/timeline/dates', [\App\Http\Controllers\SegmentController::class, 'availableDates']);
+        Route::get('/cameras/{camera}/playback', [\App\Http\Controllers\SegmentController::class, 'playbackAtTime']);
+        Route::get('/segments/{segment}/stream', [\App\Http\Controllers\SegmentController::class, 'stream']);
+        Route::get('/segments/{segment}/download', [\App\Http\Controllers\SegmentController::class, 'download']);
 
         // Storage
         Route::get('/storage', [\App\Http\Controllers\Api\V1\StorageController::class, 'index']);

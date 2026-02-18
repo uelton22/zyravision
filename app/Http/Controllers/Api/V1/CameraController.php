@@ -43,6 +43,7 @@ class CameraController extends Controller
                 'recording' => $query->where('is_recording', true),
                 'active' => $query->where('is_active', true),
                 'inactive' => $query->where('is_active', false),
+                'error' => $query->whereHas('latestStream', fn ($q) => $q->where('status', 'error')),
                 default => null,
             };
         }

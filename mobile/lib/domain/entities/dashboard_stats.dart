@@ -12,6 +12,12 @@ class DashboardStats with _$DashboardStats {
     @Default(0) int activeStreams,
     @Default(0.0) double storageUsedGb,
     @Default(0.0) double storageTotalGb,
+    // Admin-only stats
+    @Default(0) int totalDevices,
+    @Default(0) int devicesOnline,
+    @Default(0) int totalTenants,
+    @Default(0) int tenantsActive,
+    @Default(0) int totalUsers,
   }) = _DashboardStats;
 
   const DashboardStats._();

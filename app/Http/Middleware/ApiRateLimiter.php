@@ -36,11 +36,13 @@ class ApiRateLimiter
 
         $response = $next($request);
 
-        return $response->withHeaders([
-            'X-RateLimit-Limit' => $limit,
-            'X-RateLimit-Remaining' => max(0, $limit - RateLimiter::attempts($key)),
-            'X-RateLimit-Reset' => now()->addMinute()->getTimestamp(),
-        ]);
+        // BinaryFileResponse (response()->file()) nao suporta withHeaders(),
+        // entao usamos headers->set() que funciona em todos os tipos de resposta.
+        $response->headers->set('X-RateLimit-Limit', (string) $limit);
+        $response->headers->set('X-RateLimit-Remaining', (string) max(0, $limit - RateLimiter::attempts($key)));
+        $response->headers->set('X-RateLimit-Reset', (string) now()->addMinute()->getTimestamp());
+
+        return $response;
     }
 
     protected function resolveKey(Request $request): string
