@@ -44,6 +44,8 @@ class TimelineSegmentModel {
   final bool hasLocal;
   @JsonKey(name: 'has_remote', defaultValue: false)
   final bool hasRemote;
+  @JsonKey(name: 'thumbnail_url')
+  final String? thumbnailUrl;
 
   const TimelineSegmentModel({
     required this.id,
@@ -54,6 +56,7 @@ class TimelineSegmentModel {
     required this.status,
     required this.hasLocal,
     required this.hasRemote,
+    this.thumbnailUrl,
   });
 
   factory TimelineSegmentModel.fromJson(Map<String, dynamic> json) =>

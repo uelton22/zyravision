@@ -5,11 +5,11 @@ import 'package:go_router/go_router.dart';
 import '../../../core/theme/zy_colors.dart';
 import '../../../core/theme/zy_spacing.dart';
 import '../../../domain/entities/camera.dart';
-import '../../../domain/entities/camera_summary.dart';
 import '../../../state/camera/camera_list_state.dart';
 import '../../../state/camera/camera_providers.dart';
 import '../../router/route_names.dart';
-import '../../widgets/cards/zy_camera_card.dart';
+import '../../widgets/camera/zy_camera_live_preview.dart';
+import '../../widgets/feedback/zy_badge.dart';
 import '../../widgets/feedback/zy_empty_state.dart';
 import '../../widgets/feedback/zy_skeleton.dart';
 import '../../widgets/inputs/zy_search_bar.dart';
@@ -26,19 +26,6 @@ class CameraListScreen extends ConsumerWidget {
         title: const Text('Cameras'),
         actions: [
           IconButton(
-            icon: Icon(
-              state.viewMode == CameraViewMode.grid
-                  ? Icons.view_list_rounded
-                  : Icons.grid_view_rounded,
-            ),
-            tooltip: state.viewMode == CameraViewMode.grid
-                ? 'Modo lista'
-                : 'Modo grade',
-            onPressed: () {
-              ref.read(cameraListProvider.notifier).toggleViewMode();
-            },
-          ),
-          IconButton(
             icon: const Icon(Icons.view_comfy_rounded),
             tooltip: 'Multi-view',
             onPressed: () => _openMultiView(context, state),
@@ -50,7 +37,7 @@ class CameraListScreen extends ConsumerWidget {
           _SearchAndFilters(state: state, ref: ref),
           Expanded(
             child: state.isLoading
-                ? _buildSkeleton(state.viewMode)
+                ? _buildSkeleton()
                 : state.hasError && state.cameras.isEmpty
                     ? _buildError(context, ref, state)
                     : state.isEmpty
@@ -75,23 +62,18 @@ class CameraListScreen extends ConsumerWidget {
     context.go('${RouteNames.cameras}/multi-view?ids=$ids');
   }
 
-  Widget _buildSkeleton(CameraViewMode viewMode) {
-    if (viewMode == CameraViewMode.grid) {
-      return Padding(
-        padding: const EdgeInsets.all(ZySpacing.base),
-        child: GridView.count(
-          crossAxisCount: 2,
-          crossAxisSpacing: ZySpacing.md,
-          mainAxisSpacing: ZySpacing.md,
-          childAspectRatio: 0.95,
-          children: List.generate(
-            6,
-            (_) => const ZySkeleton.rect(height: 200, borderRadius: 12),
-          ),
-        ),
-      );
-    }
-    return ZySkeleton.list(itemCount: 6, itemHeight: 80);
+  Widget _buildSkeleton() {
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(
+        horizontal: ZySpacing.base,
+        vertical: ZySpacing.sm,
+      ),
+      itemCount: 6,
+      itemBuilder: (_, __) => const Padding(
+        padding: EdgeInsets.only(bottom: ZySpacing.sm),
+        child: ZySkeleton.rect(height: 80, borderRadius: 12),
+      ),
+    );
   }
 
   Widget _buildError(
@@ -135,13 +117,29 @@ class CameraListScreen extends ConsumerWidget {
           }
           return false;
         },
-        child: state.viewMode == CameraViewMode.grid
-            ? _CameraGrid(cameras: state.cameras, isLoadingMore: state.isLoadingMore)
-            : _CameraListView(cameras: state.cameras, isLoadingMore: state.isLoadingMore),
+        child: ListView.builder(
+          padding: const EdgeInsets.symmetric(
+            horizontal: ZySpacing.base,
+            vertical: ZySpacing.sm,
+          ),
+          itemCount:
+              state.cameras.length + (state.isLoadingMore ? 1 : 0),
+          itemBuilder: (context, index) {
+            if (index >= state.cameras.length) {
+              return const Padding(
+                padding: EdgeInsets.only(bottom: ZySpacing.sm),
+                child: ZySkeleton.rect(height: 80, borderRadius: 12),
+              );
+            }
+            return _CameraListTile(camera: state.cameras[index]);
+          },
+        ),
       ),
     );
   }
 }
+
+// ─── SEARCH & FILTERS ───────────────────────────────────
 
 class _SearchAndFilters extends StatelessWidget {
   final CameraListState state;
@@ -162,7 +160,8 @@ class _SearchAndFilters extends StatelessWidget {
         children: [
           ZySearchBar(
             hint: 'Buscar cameras...',
-            onChanged: (q) => ref.read(cameraListProvider.notifier).setSearch(q),
+            onChanged: (q) =>
+                ref.read(cameraListProvider.notifier).setSearch(q),
           ),
           const SizedBox(height: ZySpacing.sm),
           SizedBox(
@@ -173,8 +172,9 @@ class _SearchAndFilters extends StatelessWidget {
                 _FilterChip(
                   label: 'Todas',
                   selected: state.statusFilter == null,
-                  onTap: () =>
-                      ref.read(cameraListProvider.notifier).setStatusFilter(null),
+                  onTap: () => ref
+                      .read(cameraListProvider.notifier)
+                      .setStatusFilter(null),
                 ),
                 const SizedBox(width: ZySpacing.sm),
                 _FilterChip(
@@ -224,6 +224,8 @@ class _SearchAndFilters extends StatelessWidget {
   }
 }
 
+// ─── FILTER CHIP ────────────────────────────────────────
+
 class _FilterChip extends StatelessWidget {
   final String label;
   final bool selected;
@@ -270,81 +272,12 @@ class _FilterChip extends StatelessWidget {
   }
 }
 
-class _CameraGrid extends StatelessWidget {
-  final List<Camera> cameras;
-  final bool isLoadingMore;
+// ─── CAMERA LIST TILE (estilo Camerite) ─────────────────
 
-  const _CameraGrid({required this.cameras, this.isLoadingMore = false});
-
-  @override
-  Widget build(BuildContext context) {
-    return GridView.builder(
-      padding: const EdgeInsets.all(ZySpacing.base),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        crossAxisSpacing: ZySpacing.md,
-        mainAxisSpacing: ZySpacing.md,
-        childAspectRatio: 0.95,
-      ),
-      itemCount: cameras.length + (isLoadingMore ? 2 : 0),
-      itemBuilder: (context, index) {
-        if (index >= cameras.length) {
-          return const ZySkeleton.rect(height: 200, borderRadius: 12);
-        }
-        final camera = cameras[index];
-        return _CameraGridItem(camera: camera);
-      },
-    );
-  }
-}
-
-class _CameraGridItem extends StatelessWidget {
+class _CameraListTile extends StatelessWidget {
   final Camera camera;
 
-  const _CameraGridItem({required this.camera});
-
-  @override
-  Widget build(BuildContext context) {
-    final summary = _toSummary(camera);
-
-    return ZyCameraCard(
-      camera: summary,
-      onTap: () => context.go(RouteNames.cameraDetailPath(camera.id)),
-    );
-  }
-}
-
-class _CameraListView extends StatelessWidget {
-  final List<Camera> cameras;
-  final bool isLoadingMore;
-
-  const _CameraListView({required this.cameras, this.isLoadingMore = false});
-
-  @override
-  Widget build(BuildContext context) {
-    return ListView.builder(
-      padding: const EdgeInsets.symmetric(
-        horizontal: ZySpacing.base,
-        vertical: ZySpacing.sm,
-      ),
-      itemCount: cameras.length + (isLoadingMore ? 1 : 0),
-      itemBuilder: (context, index) {
-        if (index >= cameras.length) {
-          return const Padding(
-            padding: EdgeInsets.symmetric(vertical: ZySpacing.sm),
-            child: ZySkeleton.rect(height: 72, borderRadius: 12),
-          );
-        }
-        return _CameraListItem(camera: cameras[index]);
-      },
-    );
-  }
-}
-
-class _CameraListItem extends StatelessWidget {
-  final Camera camera;
-
-  const _CameraListItem({required this.camera});
+  const _CameraListTile({required this.camera});
 
   @override
   Widget build(BuildContext context) {
@@ -354,105 +287,161 @@ class _CameraListItem extends StatelessWidget {
       padding: const EdgeInsets.only(bottom: ZySpacing.sm),
       child: InkWell(
         borderRadius: ZySpacing.borderRadiusLg,
-        onTap: () => context.go(RouteNames.cameraDetailPath(camera.id)),
+        onTap: () {
+          final encodedName = Uri.encodeComponent(camera.name);
+          context.go(
+            '${RouteNames.liveViewPath(camera.id)}?name=$encodedName',
+          );
+        },
         child: Container(
-          padding: const EdgeInsets.all(ZySpacing.md),
           decoration: BoxDecoration(
             color: theme.colorScheme.surface,
             borderRadius: ZySpacing.borderRadiusLg,
             border: Border.all(
-              color: theme.colorScheme.outline.withValues(alpha: 0.2),
+              color: theme.colorScheme.outline.withValues(alpha: 0.12),
             ),
           ),
+          clipBehavior: Clip.antiAlias,
           child: Row(
             children: [
-              // Status indicator
-              Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  color: camera.isOnline
-                      ? ZyColors.success.withValues(alpha: 0.1)
-                      : ZyColors.danger.withValues(alpha: 0.1),
-                  borderRadius: ZySpacing.borderRadiusMd,
-                ),
-                child: Icon(
-                  camera.isOnline
-                      ? Icons.videocam_rounded
-                      : Icons.videocam_off_rounded,
-                  color: camera.isOnline ? ZyColors.success : ZyColors.danger,
-                ),
-              ),
-              const SizedBox(width: ZySpacing.md),
-              // Info
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+              // Miniatura esquerda
+              SizedBox(
+                width: 110,
+                height: 75,
+                child: Stack(
+                  fit: StackFit.expand,
                   children: [
-                    Text(
-                      camera.name,
-                      style: theme.textTheme.titleSmall,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    ZyCameraLivePreview(
+                      hlsPath: camera.stream?.urls?.hls,
+                      isOnline: camera.isOnline,
+                      height: 75,
+                      fit: BoxFit.cover,
                     ),
-                    const SizedBox(height: 2),
-                    Row(
-                      children: [
-                        Container(
-                          width: 6,
-                          height: 6,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: camera.isOnline
-                                ? ZyColors.success
-                                : ZyColors.danger,
-                          ),
+                    // Badge de status
+                    if (camera.isOnline)
+                      const Positioned(
+                        bottom: 4,
+                        right: 4,
+                        child: ZyBadge(
+                          label: 'LIVE',
+                          variant: ZyBadgeVariant.success,
+                          size: ZyBadgeSize.sm,
                         ),
-                        const SizedBox(width: ZySpacing.xs),
-                        Text(
-                          camera.isOnline ? 'Online' : 'Offline',
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: theme.colorScheme.outline,
-                          ),
-                        ),
-                        if (camera.isRecording) ...[
-                          const SizedBox(width: ZySpacing.sm),
-                          Icon(
-                            Icons.fiber_manual_record,
-                            size: 10,
-                            color: ZyColors.danger,
-                          ),
-                          const SizedBox(width: 2),
-                          Text(
-                            'REC',
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: ZyColors.danger,
-                              fontWeight: FontWeight.w600,
-                              fontSize: 11,
+                      ),
+                    if (!camera.isOnline)
+                      Positioned.fill(
+                        child: Container(
+                          color: Colors.black38,
+                          child: const Center(
+                            child: Icon(
+                              Icons.videocam_off,
+                              color: Colors.white54,
+                              size: 24,
                             ),
                           ),
-                        ],
-                      ],
-                    ),
-                    if (camera.manufacturer != null ||
-                        camera.resolution != null) ...[
-                      const SizedBox(height: 2),
-                      Text(
-                        [camera.manufacturer, camera.resolution]
-                            .where((e) => e != null)
-                            .join(' · '),
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.outline,
-                          fontSize: 11,
                         ),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
                       ),
-                    ],
                   ],
                 ),
               ),
-              const Icon(Icons.chevron_right, size: 20),
+              // Info direita
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: ZySpacing.md,
+                    vertical: ZySpacing.sm,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        camera.name,
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Container(
+                            width: 7,
+                            height: 7,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              color: camera.isOnline
+                                  ? ZyColors.success
+                                  : ZyColors.danger,
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            camera.isOnline ? 'Online' : 'Offline',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: theme.colorScheme.outline,
+                              fontSize: 11,
+                            ),
+                          ),
+                          if (camera.isRecording) ...[
+                            const SizedBox(width: ZySpacing.sm),
+                            Icon(
+                              Icons.fiber_manual_record,
+                              size: 8,
+                              color: ZyColors.danger,
+                            ),
+                            const SizedBox(width: 2),
+                            Text(
+                              'REC',
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: ZyColors.danger,
+                                fontWeight: FontWeight.w600,
+                                fontSize: 10,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                      if (camera.location != null) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          camera.location!,
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: ZyColors.primary,
+                            fontSize: 11,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ] else if (camera.manufacturer != null) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          [camera.manufacturer, camera.resolution]
+                              .where((e) => e != null)
+                              .join(' · '),
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.outline,
+                            fontSize: 11,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+              // Error indicator
+              if (!camera.isOnline)
+                Padding(
+                  padding: const EdgeInsets.only(right: ZySpacing.md),
+                  child: Icon(
+                    Icons.warning_amber_rounded,
+                    color: ZyColors.danger.withValues(alpha: 0.6),
+                    size: 20,
+                  ),
+                ),
             ],
           ),
         ),
@@ -461,16 +450,3 @@ class _CameraListItem extends StatelessWidget {
   }
 }
 
-CameraSummary _toSummary(Camera camera) {
-  return CameraSummary(
-    id: camera.id,
-    name: camera.name,
-    status: camera.status,
-    isOnline: camera.isOnline,
-    isRecording: camera.isRecording,
-    snapshotUrl: camera.snapshotUrl,
-    hlsPath: camera.stream?.urls?.hls,
-    manufacturer: camera.manufacturer,
-    location: camera.location,
-  );
-}

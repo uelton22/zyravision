@@ -19,6 +19,7 @@ class RecordingSegment with _$RecordingSegment {
     String? resolution,
     int? fps,
     String? thumbnailPath,
+    String? thumbnailUrl,
     @Default(false) bool hasLocal,
     @Default(false) bool hasRemote,
   }) = _RecordingSegment;

@@ -34,6 +34,7 @@ TimelineSegmentModel _$TimelineSegmentModelFromJson(
   status: json['status'] as String? ?? 'unknown',
   hasLocal: json['has_local'] as bool? ?? false,
   hasRemote: json['has_remote'] as bool? ?? false,
+  thumbnailUrl: json['thumbnail_url'] as String?,
 );
 
 TimelineRangeModel _$TimelineRangeModelFromJson(Map<String, dynamic> json) =>

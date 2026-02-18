@@ -2,8 +2,11 @@
 
 namespace App\Console\Commands;
 
+use App\Models\Camera;
+use App\Models\RecordingSegment;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
 
@@ -40,6 +43,8 @@ class TranscoderWorkerCommand extends Command
 
     private string $commandsKey = 'transcoding:commands';
 
+    private string $ffmpegTasksKey = 'transcoding:ffmpeg_tasks';
+
     public function handle(): int
     {
         $this->workerId = gethostname() . '_' . getmypid();
@@ -64,16 +69,19 @@ class TranscoderWorkerCommand extends Command
         $this->info("Worker pronto. Aguardando comandos de transcodificacao...");
 
         while ($this->shouldRun) {
-            // 1. Process pending commands from Redis queue
+            // 1. Process pending transcoding commands from Redis queue
             $this->processCommands($maxCameras);
 
-            // 2. Check health of active FFmpeg processes
+            // 2. Process pending FFmpeg tasks (thumbnails, snapshots)
+            $this->processFfmpegTasks();
+
+            // 3. Check health of active FFmpeg processes
             $this->checkProcessHealth();
 
-            // 3. Update worker status in Redis
+            // 4. Update worker status in Redis
             $this->updateWorkerStatus();
 
-            // 4. Sleep before next poll
+            // 5. Sleep before next poll
             sleep($pollInterval);
         }
 
@@ -478,6 +486,170 @@ class TranscoderWorkerCommand extends Command
             'max_cameras' => (int) $this->option('max-cameras'),
         ], 86400);
     }
+
+    // ─── FFmpeg Tasks (thumbnails, snapshots) ──────────────
+
+    /**
+     * Process lightweight FFmpeg tasks: thumbnail generation, snapshot capture.
+     * These are short-lived operations (1-3s) unlike continuous transcoding.
+     * Max 5 tasks per poll cycle to avoid blocking the main loop.
+     */
+    private function processFfmpegTasks(): void
+    {
+        $maxPerCycle = 5;
+        $processed = 0;
+
+        while ($processed < $maxPerCycle) {
+            $raw = Redis::lpop($this->ffmpegTasksKey);
+            if (! $raw) {
+                break;
+            }
+
+            $task = json_decode($raw, true);
+            if (! $task || ! isset($task['action'])) {
+                Log::warning('FFmpeg task invalida recebida.', ['raw' => $raw]);
+                continue;
+            }
+
+            try {
+                match ($task['action']) {
+                    'generate_thumbnail' => $this->handleGenerateThumbnail($task),
+                    'capture_snapshot' => $this->handleCaptureSnapshot($task),
+                    default => Log::warning("FFmpeg task desconhecida: {$task['action']}"),
+                };
+            } catch (\Throwable $e) {
+                Log::error("Erro ao processar FFmpeg task: {$e->getMessage()}", [
+                    'action' => $task['action'],
+                    'error' => $e->getMessage(),
+                ]);
+            }
+
+            $processed++;
+        }
+    }
+
+    /**
+     * Generate a thumbnail from a recording segment video file.
+     */
+    private function handleGenerateThumbnail(array $task): void
+    {
+        $segmentId = $task['segment_id'] ?? null;
+        if (! $segmentId) {
+            return;
+        }
+
+        $segment = RecordingSegment::find($segmentId);
+        if (! $segment) {
+            return;
+        }
+
+        if ($segment->thumbnail_path) {
+            $fullPath = storage_path('app/public' . str_replace('/storage', '', $segment->thumbnail_path));
+            if (File::exists($fullPath)) {
+                return;
+            }
+        }
+
+        $videoPath = $segment->local_path;
+        if (! $videoPath || ! File::exists($videoPath)) {
+            Log::debug("Thumbnail: video nao encontrado para segmento {$segmentId}.");
+            return;
+        }
+
+        $thumbnailDir = storage_path("app/public/thumbnails/{$segment->camera_id}");
+        if (! File::isDirectory($thumbnailDir)) {
+            File::makeDirectory($thumbnailDir, 0755, true);
+        }
+
+        $thumbnailFilename = pathinfo($segment->filename ?? $segment->id, PATHINFO_FILENAME) . '.jpg';
+        $thumbnailPath = "{$thumbnailDir}/{$thumbnailFilename}";
+
+        $ffmpeg = $this->findFfmpeg();
+        $seekTime = min(1, max(0, ($segment->duration_seconds ?? 0) - 1));
+
+        $cmd = implode(' ', array_map('escapeshellarg', [
+            $ffmpeg, '-y',
+            '-ss', (string) $seekTime,
+            '-i', $videoPath,
+            '-frames:v', '1',
+            '-vf', 'scale=320:-1',
+            '-q:v', '5',
+            $thumbnailPath,
+        ]));
+
+        exec($cmd . ' 2>&1', $output, $exitCode);
+
+        if ($exitCode === 0 && File::exists($thumbnailPath)) {
+            $publicPath = "/storage/thumbnails/{$segment->camera_id}/{$thumbnailFilename}";
+            $segment->update(['thumbnail_path' => $publicPath]);
+
+            if ($this->output->isVerbose()) {
+                $this->line("  [thumb] Segmento {$segmentId} -> {$publicPath}");
+            }
+        } else {
+            Log::warning("Thumbnail falhou para segmento {$segmentId}.", [
+                'exit_code' => $exitCode,
+                'output' => implode("\n", array_slice($output, -5)),
+            ]);
+        }
+    }
+
+    /**
+     * Capture a snapshot from a camera's live stream via MediaMTX relay.
+     */
+    private function handleCaptureSnapshot(array $task): void
+    {
+        $cameraId = $task['camera_id'] ?? null;
+        $mediamtxPath = $task['mediamtx_path'] ?? null;
+
+        if (! $cameraId || ! $mediamtxPath) {
+            return;
+        }
+
+        $camera = Camera::find($cameraId);
+        if (! $camera || ! $camera->is_active) {
+            return;
+        }
+
+        $filename = "snapshots/{$cameraId}.jpg";
+        $storagePath = storage_path("app/public/{$filename}");
+
+        $dir = dirname($storagePath);
+        if (! is_dir($dir)) {
+            mkdir($dir, 0755, true);
+        }
+
+        $quality = $task['quality'] ?? config('streaming.snapshots.quality', 80);
+        $rtspUrl = $this->buildInputUrl($mediamtxPath);
+        $ffmpeg = $this->findFfmpeg();
+
+        $cmd = implode(' ', array_map('escapeshellarg', [
+            $ffmpeg, '-y',
+            '-rtsp_transport', 'tcp',
+            '-i', $rtspUrl,
+            '-frames:v', '1',
+            '-q:v', (string) round((100 - $quality) * 31 / 100),
+            $storagePath,
+        ]));
+
+        exec($cmd . ' 2>&1', $output, $exitCode);
+
+        if ($exitCode === 0 && file_exists($storagePath)) {
+            $camera->update(['snapshot_url' => "/storage/{$filename}"]);
+
+            if ($this->output->isVerbose()) {
+                $this->line("  [snap] Camera {$cameraId} -> /storage/{$filename}");
+            }
+        } else {
+            Log::warning("Snapshot falhou para camera {$cameraId}.", [
+                'mediamtx_path' => $mediamtxPath,
+                'exit_code' => $exitCode,
+                'output' => implode("\n", array_slice($output, -3)),
+            ]);
+        }
+    }
+
+    // ─── Lifecycle ───────────────────────────────────────────
 
     /**
      * Graceful shutdown: stop all FFmpeg processes and deregister.

@@ -10,8 +10,6 @@ import '../screens/cameras/camera_list_screen.dart';
 import '../screens/cameras/live_view_screen.dart';
 import '../screens/cameras/multi_view_screen.dart';
 import '../screens/dashboard/dashboard_screen.dart';
-import '../screens/recordings/recording_list_screen.dart';
-import '../screens/recordings/recording_playback_screen.dart';
 import '../screens/splash/splash_screen.dart';
 import '../widgets/navigation/zy_bottom_nav.dart';
 import 'route_names.dart';
@@ -46,16 +44,9 @@ final routerProvider = Provider<GoRouter>((ref) {
       final isOnSplash = state.matchedLocation == RouteNames.splash;
       final isOnLogin = state.matchedLocation == RouteNames.login;
 
-      // Enquanto esta carregando (splash), nao redireciona
       if (isLoading) return null;
-
-      // Nao autenticado e nao esta no login → vai para login
       if (!isAuth && !isOnLogin && !isOnSplash) return RouteNames.login;
-
-      // Autenticado mas no login ou splash → vai para dashboard
       if (isAuth && (isOnLogin || isOnSplash)) return RouteNames.dashboard;
-
-      // Nao autenticado e no splash (checkAuth terminou) → vai para login
       if (!isAuth && isOnSplash) return RouteNames.login;
 
       return null;
@@ -86,7 +77,8 @@ final routerProvider = Provider<GoRouter>((ref) {
                 path: 'multi-view',
                 parentNavigatorKey: null,
                 builder: (context, state) {
-                  final ids = state.uri.queryParameters['ids']?.split(',') ?? [];
+                  final ids =
+                      state.uri.queryParameters['ids']?.split(',') ?? [];
                   return MultiViewScreen(cameraIds: ids);
                 },
               ),
@@ -114,27 +106,6 @@ final routerProvider = Provider<GoRouter>((ref) {
             ],
           ),
           GoRoute(
-            path: RouteNames.recordings,
-            builder: (context, state) => const RecordingListScreen(),
-            routes: [
-              GoRoute(
-                path: ':cameraId/playback',
-                builder: (context, state) {
-                  final cameraId = state.pathParameters['cameraId']!;
-                  final recordingId =
-                      state.uri.queryParameters['recording'];
-                  final cameraName =
-                      state.uri.queryParameters['name'];
-                  return RecordingPlaybackScreen(
-                    cameraId: cameraId,
-                    recordingId: recordingId,
-                    cameraName: cameraName,
-                  );
-                },
-              ),
-            ],
-          ),
-          GoRoute(
             path: RouteNames.alerts,
             builder: (context, state) =>
                 const _PlaceholderScreen(title: 'Alertas'),
@@ -158,7 +129,6 @@ class _ShellScaffold extends StatelessWidget {
   static const _routes = [
     RouteNames.dashboard,
     RouteNames.cameras,
-    RouteNames.recordings,
     RouteNames.alerts,
     RouteNames.settings,
   ];
@@ -166,7 +136,7 @@ class _ShellScaffold extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final location = GoRouterState.of(context).matchedLocation;
-    final currentIndex = _routes.indexOf(location).clamp(0, 4);
+    final currentIndex = _routes.indexOf(location).clamp(0, 3);
 
     return Scaffold(
       body: child,
@@ -198,7 +168,7 @@ class _PlaceholderScreen extends StatelessWidget {
             ),
             const SizedBox(height: 16),
             Text(
-              '$title\nEm desenvolvimento (Fase M2+)',
+              '$title\nEm desenvolvimento',
               textAlign: TextAlign.center,
               style: Theme.of(context).textTheme.bodyLarge,
             ),

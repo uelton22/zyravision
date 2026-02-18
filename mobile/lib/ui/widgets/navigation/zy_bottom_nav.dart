@@ -30,11 +30,6 @@ class ZyBottomNav extends StatelessWidget {
           selectedIcon: Icon(Icons.videocam),
           label: 'Cameras',
         ),
-        const NavigationDestination(
-          icon: Icon(Icons.play_circle_outline),
-          selectedIcon: Icon(Icons.play_circle),
-          label: 'Gravacoes',
-        ),
         NavigationDestination(
           icon: alertBadgeCount > 0
               ? Badge.count(

@@ -153,6 +153,9 @@ class RecordingSegment extends Model
             'ends_at' => $resolvedEndsAt,
             'duration_seconds' => $resolvedDuration,
         ]);
+
+        // Dispatch thumbnail generation
+        \App\Jobs\GenerateSegmentThumbnailJob::dispatch($this->id);
     }
 
     public function markUploaded(string $remotePath, ?string $storageBackendId = null): void

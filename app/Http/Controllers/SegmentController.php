@@ -120,6 +120,7 @@ class SegmentController extends Controller
                 'status' => $s->status,
                 'has_local' => $s->isLocal(),
                 'has_remote' => $s->isRemote(),
+                'thumbnail_url' => $s->thumbnail_path,
             ]);
 
         // Build timeline ranges (contiguous segments grouped)

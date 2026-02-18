@@ -30,6 +30,7 @@ mixin _$RecordingSegment {
   String? get resolution => throw _privateConstructorUsedError;
   int? get fps => throw _privateConstructorUsedError;
   String? get thumbnailPath => throw _privateConstructorUsedError;
+  String? get thumbnailUrl => throw _privateConstructorUsedError;
   bool get hasLocal => throw _privateConstructorUsedError;
   bool get hasRemote => throw _privateConstructorUsedError;
 
@@ -61,6 +62,7 @@ abstract class $RecordingSegmentCopyWith<$Res> {
     String? resolution,
     int? fps,
     String? thumbnailPath,
+    String? thumbnailUrl,
     bool hasLocal,
     bool hasRemote,
   });
@@ -94,6 +96,7 @@ class _$RecordingSegmentCopyWithImpl<$Res, $Val extends RecordingSegment>
     Object? resolution = freezed,
     Object? fps = freezed,
     Object? thumbnailPath = freezed,
+    Object? thumbnailUrl = freezed,
     Object? hasLocal = null,
     Object? hasRemote = null,
   }) {
@@ -164,6 +167,11 @@ class _$RecordingSegmentCopyWithImpl<$Res, $Val extends RecordingSegment>
                     ? _value.thumbnailPath
                     : thumbnailPath // ignore: cast_nullable_to_non_nullable
                         as String?,
+            thumbnailUrl:
+                freezed == thumbnailUrl
+                    ? _value.thumbnailUrl
+                    : thumbnailUrl // ignore: cast_nullable_to_non_nullable
+                        as String?,
             hasLocal:
                 null == hasLocal
                     ? _value.hasLocal
@@ -203,6 +211,7 @@ abstract class _$$RecordingSegmentImplCopyWith<$Res>
     String? resolution,
     int? fps,
     String? thumbnailPath,
+    String? thumbnailUrl,
     bool hasLocal,
     bool hasRemote,
   });
@@ -235,6 +244,7 @@ class __$$RecordingSegmentImplCopyWithImpl<$Res>
     Object? resolution = freezed,
     Object? fps = freezed,
     Object? thumbnailPath = freezed,
+    Object? thumbnailUrl = freezed,
     Object? hasLocal = null,
     Object? hasRemote = null,
   }) {
@@ -305,6 +315,11 @@ class __$$RecordingSegmentImplCopyWithImpl<$Res>
                 ? _value.thumbnailPath
                 : thumbnailPath // ignore: cast_nullable_to_non_nullable
                     as String?,
+        thumbnailUrl:
+            freezed == thumbnailUrl
+                ? _value.thumbnailUrl
+                : thumbnailUrl // ignore: cast_nullable_to_non_nullable
+                    as String?,
         hasLocal:
             null == hasLocal
                 ? _value.hasLocal
@@ -337,6 +352,7 @@ class _$RecordingSegmentImpl extends _RecordingSegment {
     this.resolution,
     this.fps,
     this.thumbnailPath,
+    this.thumbnailUrl,
     this.hasLocal = false,
     this.hasRemote = false,
   }) : super._();
@@ -371,6 +387,8 @@ class _$RecordingSegmentImpl extends _RecordingSegment {
   @override
   final String? thumbnailPath;
   @override
+  final String? thumbnailUrl;
+  @override
   @JsonKey()
   final bool hasLocal;
   @override
@@ -379,7 +397,7 @@ class _$RecordingSegmentImpl extends _RecordingSegment {
 
   @override
   String toString() {
-    return 'RecordingSegment(id: $id, cameraId: $cameraId, tenantId: $tenantId, status: $status, filename: $filename, fileSizeBytes: $fileSizeBytes, durationSeconds: $durationSeconds, startsAt: $startsAt, endsAt: $endsAt, codec: $codec, resolution: $resolution, fps: $fps, thumbnailPath: $thumbnailPath, hasLocal: $hasLocal, hasRemote: $hasRemote)';
+    return 'RecordingSegment(id: $id, cameraId: $cameraId, tenantId: $tenantId, status: $status, filename: $filename, fileSizeBytes: $fileSizeBytes, durationSeconds: $durationSeconds, startsAt: $startsAt, endsAt: $endsAt, codec: $codec, resolution: $resolution, fps: $fps, thumbnailPath: $thumbnailPath, thumbnailUrl: $thumbnailUrl, hasLocal: $hasLocal, hasRemote: $hasRemote)';
   }
 
   @override
@@ -408,6 +426,8 @@ class _$RecordingSegmentImpl extends _RecordingSegment {
             (identical(other.fps, fps) || other.fps == fps) &&
             (identical(other.thumbnailPath, thumbnailPath) ||
                 other.thumbnailPath == thumbnailPath) &&
+            (identical(other.thumbnailUrl, thumbnailUrl) ||
+                other.thumbnailUrl == thumbnailUrl) &&
             (identical(other.hasLocal, hasLocal) ||
                 other.hasLocal == hasLocal) &&
             (identical(other.hasRemote, hasRemote) ||
@@ -430,6 +450,7 @@ class _$RecordingSegmentImpl extends _RecordingSegment {
     resolution,
     fps,
     thumbnailPath,
+    thumbnailUrl,
     hasLocal,
     hasRemote,
   );
@@ -461,6 +482,7 @@ abstract class _RecordingSegment extends RecordingSegment {
     final String? resolution,
     final int? fps,
     final String? thumbnailPath,
+    final String? thumbnailUrl,
     final bool hasLocal,
     final bool hasRemote,
   }) = _$RecordingSegmentImpl;
@@ -492,6 +514,8 @@ abstract class _RecordingSegment extends RecordingSegment {
   int? get fps;
   @override
   String? get thumbnailPath;
+  @override
+  String? get thumbnailUrl;
   @override
   bool get hasLocal;
   @override

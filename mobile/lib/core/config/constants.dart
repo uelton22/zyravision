@@ -27,16 +27,6 @@ class ApiPaths {
   static String cameraStreamStart(String id) => '/cameras/$id/stream/start';
   static String cameraStreamStop(String id) => '/cameras/$id/stream/stop';
 
-  // Recordings
-  static const String camerasRecordingSummary = '/cameras/recordings-summary';
-  static const String recordings = '/recordings';
-  static String recordingDetail(String id) => '/recordings/$id';
-  static String recordingClip(String id) => '/recordings/$id/clip';
-  static String recordingStream(String id) => '/recordings/$id/stream';
-  static String recordingDownload(String id) => '/recordings/$id/download';
-  static String cameraRecordings(String cameraId) =>
-      '/cameras/$cameraId/recordings';
-
   // Segments & Timeline
   static String cameraTimeline(String cameraId) =>
       '/cameras/$cameraId/timeline';
