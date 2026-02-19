@@ -817,8 +817,8 @@ class _VerticalTimeline extends StatefulWidget {
 
 class _VerticalTimelineState extends State<_VerticalTimeline> {
   final ScrollController _scrollController = ScrollController();
-  static const double _pixelsPerMinute = 6.0;
-  static const double _gapHeight = 52.0;
+  static const double _pixelsPerMinute = 80.0;
+  static const double _gapHeight = 40.0;
   static const double _minRangeHeight = 80.0;
   bool _isUserScrolling = false;
   bool _programmaticScroll = false;
@@ -1035,11 +1035,13 @@ class _VerticalTimelineState extends State<_VerticalTimeline> {
 
     final viewportPadding = MediaQuery.of(context).size.height * 0.4;
 
+    final segments = widget.timelineState.data?.segments ?? [];
+    final screenWidth = MediaQuery.of(context).size.width;
+
     return Container(
       color: const Color(0xFF1A2530),
       child: Stack(
         children: [
-          // Scrollable condensed timeline
           NotificationListener<ScrollNotification>(
             onNotification: (notification) {
               if (notification is ScrollStartNotification &&
@@ -1055,19 +1057,21 @@ class _VerticalTimelineState extends State<_VerticalTimeline> {
               physics: const ClampingScrollPhysics(),
               child: SizedBox(
                 height: _totalContentHeight + viewportPadding,
-                width: MediaQuery.of(context).size.width,
-                child: CustomPaint(
-                  size: Size(MediaQuery.of(context).size.width,
-                      _totalContentHeight + viewportPadding),
-                  painter: _CondensedTimelinePainter(
-                    layout: _layout,
-                    segments: widget.timelineState.data?.segments ?? [],
-                  ),
+                width: screenWidth,
+                child: Stack(
+                  children: [
+                    // Background paint: gap indicators and time labels
+                    CustomPaint(
+                      size: Size(screenWidth, _totalContentHeight + viewportPadding),
+                      painter: _TimelineBackgroundPainter(layout: _layout),
+                    ),
+                    // Thumbnail tiles positioned per-segment
+                    ..._buildThumbnailTiles(segments, screenWidth),
+                  ],
                 ),
               ),
             ),
           ),
-          // Fixed playhead at top
           Positioned(
             top: 0,
             left: 0,
@@ -1078,6 +1082,99 @@ class _VerticalTimelineState extends State<_VerticalTimeline> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  /// Build Camerite-style thumbnail tiles: small thumbnails on the right side
+  /// with a thin horizontal connector line from the left.
+  List<Widget> _buildThumbnailTiles(List segments, double screenWidth) {
+    const thumbWidth = 130.0;
+    const thumbHeight = 64.0;
+    const thumbRight = 10.0;
+    final thumbLeft = screenWidth - thumbWidth - thumbRight;
+    const lineLeft = 70.0;
+
+    final tiles = <Widget>[];
+
+    for (final block in _layout) {
+      if (block.type != _BlockType.recording || block.range == null) continue;
+
+      final range = block.range!;
+
+      for (final seg in segments) {
+        if (seg.startsAt == null) continue;
+        if (seg.startsAt!.isBefore(range.start) || !seg.startsAt!.isBefore(range.end)) {
+          continue;
+        }
+
+        final fraction = seg.startsAt!.difference(range.start).inSeconds /
+            range.duration.inSeconds;
+        final segY = block.startY + (block.height * fraction);
+        final centerY = segY + thumbHeight / 2;
+
+        if (segY + thumbHeight > block.startY + block.height + 8) continue;
+
+        final thumbnailUrl = seg.thumbnailUrl as String?;
+
+        // Horizontal connector line from accent bar to thumbnail
+        tiles.add(
+          Positioned(
+            left: lineLeft,
+            top: centerY - 0.5,
+            width: thumbLeft - lineLeft - 2,
+            height: 1,
+            child: Container(color: Colors.white.withValues(alpha: 0.08)),
+          ),
+        );
+
+        // Thumbnail image on the right side
+        tiles.add(
+          Positioned(
+            left: thumbLeft,
+            top: segY,
+            width: thumbWidth,
+            height: thumbHeight,
+            child: Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(
+                  color: Colors.white.withValues(alpha: 0.08),
+                  width: 1,
+                ),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.4),
+                    blurRadius: 4,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(5),
+                child: thumbnailUrl != null && thumbnailUrl.isNotEmpty
+                    ? Image.network(
+                        '${AppConfig.streamingBaseUrl}$thumbnailUrl',
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => _thumbnailPlaceholder(),
+                      )
+                    : _thumbnailPlaceholder(),
+              ),
+            ),
+          ),
+        );
+      }
+    }
+
+    return tiles;
+  }
+
+  Widget _thumbnailPlaceholder() {
+    return Container(
+      color: const Color(0xFF2A3540),
+      child: Center(
+        child: Icon(Icons.videocam_outlined,
+            size: 16, color: Colors.white.withValues(alpha: 0.15)),
       ),
     );
   }
@@ -1148,115 +1245,81 @@ class _FixedPlayhead extends StatelessWidget {
   }
 }
 
-/// Custom painter for condensed timeline.
-/// Only renders recording ranges and gap indicators — not full 24h.
-class _CondensedTimelinePainter extends CustomPainter {
+/// Background painter: time labels, accent bars, gap indicators.
+/// Thumbnails are rendered as Flutter widgets on top.
+class _TimelineBackgroundPainter extends CustomPainter {
   final List<_LayoutBlock> layout;
-  final List segments;
 
-  _CondensedTimelinePainter({
-    required this.layout,
-    required this.segments,
-  });
+  _TimelineBackgroundPainter({required this.layout});
 
   @override
   void paint(Canvas canvas, Size size) {
     for (final block in layout) {
       if (block.type == _BlockType.recording) {
-        _drawRecordingBlock(canvas, size, block);
+        _drawRecordingBackground(canvas, size, block);
       } else {
         _drawGapBlock(canvas, size, block);
       }
     }
   }
 
-  void _drawRecordingBlock(
-      Canvas canvas, Size size, _LayoutBlock block) {
+  void _drawRecordingBackground(Canvas canvas, Size size, _LayoutBlock block) {
     final range = block.range!;
     final startY = block.startY;
     final height = block.height;
-    const barLeft = 70.0;
-    final barWidth = size.width - barLeft - 8;
+    const lineX = 70.0;
 
-    // Recording bar background with gradient
-    final barRect =
-        Rect.fromLTWH(barLeft, startY + 2, barWidth, height - 4);
-    final gradient = LinearGradient(
-      begin: Alignment.centerLeft,
-      end: Alignment.centerRight,
-      colors: [
-        ZyColors.primary.withValues(alpha: 0.30),
-        ZyColors.primary.withValues(alpha: 0.10),
-      ],
+    // Vertical accent line (Camerite-style thin bar)
+    canvas.drawLine(
+      Offset(lineX, startY),
+      Offset(lineX, startY + height),
+      Paint()
+        ..color = ZyColors.primary.withValues(alpha: 0.5)
+        ..strokeWidth = 2
+        ..strokeCap = StrokeCap.round,
     );
-    final barPaint = Paint()..shader = gradient.createShader(barRect);
-    canvas.drawRRect(
-        RRect.fromRectAndRadius(barRect, const Radius.circular(4)),
-        barPaint);
 
-    // Left accent bar
-    final accentPaint = Paint()
-      ..color = ZyColors.primary.withValues(alpha: 0.7)
-      ..strokeWidth = 3
-      ..strokeCap = StrokeCap.round;
-    canvas.drawLine(Offset(barLeft, startY + 4),
-        Offset(barLeft, startY + height - 4), accentPaint);
-
-    // Start time label (bold)
-    _drawTimeLabel(canvas, range.start, startY + 4, bold: true);
+    // Start time label
+    _drawTimeLabel(canvas, range.start, startY + 2, bold: true);
 
     // End time label
-    if (height > 50) {
-      _drawTimeLabel(canvas, range.end, startY + height - 16,
-          bold: false);
+    if (height > 80) {
+      _drawTimeLabel(canvas, range.end, startY + height - 14, bold: false);
     }
 
-    // Interval marks inside the recording bar
+    // Interval time marks every 5 minutes
     final durationMin = range.duration.inMinutes;
-    final interval = durationMin > 120 ? 30 : 15;
+    final interval = durationMin > 60 ? 10 : 5;
     if (durationMin > 0) {
       final startMinute = range.start.hour * 60 + range.start.minute;
-      final firstMark = ((startMinute / interval).ceil() * interval)
-          .toInt();
+      final firstMark = ((startMinute / interval).ceil() * interval).toInt();
 
-      for (var m = firstMark;
-          m < startMinute + durationMin;
-          m += interval) {
+      for (var m = firstMark; m < startMinute + durationMin; m += interval) {
         final markTime = DateTime(
-            range.start.year,
-            range.start.month,
-            range.start.day,
-            m ~/ 60,
-            m % 60);
-        if (markTime.isBefore(range.start) ||
-            !markTime.isBefore(range.end)) {
-          continue;
-        }
+            range.start.year, range.start.month, range.start.day, m ~/ 60, m % 60);
+        if (markTime.isBefore(range.start) || !markTime.isBefore(range.end)) continue;
 
-        final fraction = markTime.difference(range.start).inSeconds /
-            range.duration.inSeconds;
+        final fraction = markTime.difference(range.start).inSeconds / range.duration.inSeconds;
         final markY = startY + (height * fraction);
 
-        // Skip if too close to start/end labels
-        if (markY - startY < 22 || startY + height - markY < 22) {
-          continue;
-        }
+        if (markY - startY < 20 || startY + height - markY < 20) continue;
 
-        // Tick line
-        final tickPaint = Paint()
-          ..color = Colors.white.withValues(alpha: 0.08)
-          ..strokeWidth = 0.5;
-        canvas.drawLine(Offset(barLeft + 4, markY),
-            Offset(size.width - 8, markY), tickPaint);
+        // Small tick on the accent line
+        canvas.drawLine(
+          Offset(lineX - 4, markY),
+          Offset(lineX + 4, markY),
+          Paint()
+            ..color = Colors.white.withValues(alpha: 0.12)
+            ..strokeWidth = 1,
+        );
 
-        // Label
-        final label =
-            '${markTime.hour.toString().padLeft(2, '0')}:${markTime.minute.toString().padLeft(2, '0')}';
+        // Time label
+        final label = '${markTime.hour.toString().padLeft(2, '0')}:${markTime.minute.toString().padLeft(2, '0')}';
         final tp = TextPainter(
           text: TextSpan(
             text: label,
             style: TextStyle(
-              color: Colors.white.withValues(alpha: 0.20),
+              color: Colors.white.withValues(alpha: 0.22),
               fontSize: 9,
               fontFamily: 'monospace',
             ),
@@ -1267,79 +1330,36 @@ class _CondensedTimelinePainter extends CustomPainter {
         tp.paint(canvas, Offset(6, markY - 5));
       }
     }
+  }
 
-    // Draw segment tick marks inside the bar (small dots at segment boundaries)
-    for (final seg in segments) {
-      if (seg.startsAt == null) continue;
-      if (seg.startsAt!.isBefore(range.start) ||
-          !seg.startsAt!.isBefore(range.end)) {
-        continue;
-      }
-
-      final fraction = seg.startsAt!.difference(range.start).inSeconds /
-          range.duration.inSeconds;
-      final segY = startY + (height * fraction);
-
-      // Small segment indicator dot
-      canvas.drawCircle(
-        Offset(barLeft + barWidth - 12, segY),
-        2.5,
-        Paint()..color = ZyColors.primary.withValues(alpha: 0.6),
-      );
-    }
-
-    // Duration label inside bar
-    final durText = _formatDuration(range.duration);
-    final durTp = TextPainter(
+  void _drawTimeLabel(Canvas canvas, DateTime time, double y, {required bool bold}) {
+    final label = '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
+    final tp = TextPainter(
       text: TextSpan(
-        text: durText,
+        text: label,
         style: TextStyle(
-          color: Colors.white.withValues(alpha: 0.35),
-          fontSize: 10,
-          fontWeight: FontWeight.w500,
+          color: Colors.white.withValues(alpha: bold ? 0.5 : 0.25),
+          fontSize: bold ? 10 : 9,
+          fontWeight: bold ? FontWeight.w600 : FontWeight.w400,
+          fontFamily: 'monospace',
         ),
       ),
       textDirection: TextDirection.ltr,
     );
-    durTp.layout();
-    if (height > 60) {
-      durTp.paint(
-          canvas, Offset(barLeft + 10, startY + height / 2 - 6));
-    }
-  }
-
-  void _drawTimeLabel(Canvas canvas, DateTime time, double y,
-      {required bool bold}) {
-    final label =
-        '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
-    final style = TextStyle(
-      color:
-          Colors.white.withValues(alpha: bold ? 0.55 : 0.30),
-      fontSize: bold ? 11 : 9,
-      fontWeight: bold ? FontWeight.w600 : FontWeight.w400,
-      fontFamily: 'monospace',
-    );
-    final tp = TextPainter(
-      text: TextSpan(text: label, style: style),
-      textDirection: TextDirection.ltr,
-    );
     tp.layout();
-    tp.paint(canvas, Offset(4, y));
+    tp.paint(canvas, Offset(8, y));
   }
 
   void _drawGapBlock(Canvas canvas, Size size, _LayoutBlock block) {
     final centerY = block.startY + block.height / 2;
 
-    // Dashed line
     final dashPaint = Paint()
       ..color = Colors.white.withValues(alpha: 0.06)
       ..strokeWidth = 1;
     for (double x = 8; x < size.width - 8; x += 8) {
-      canvas.drawLine(
-          Offset(x, centerY), Offset(x + 4, centerY), dashPaint);
+      canvas.drawLine(Offset(x, centerY), Offset(x + 4, centerY), dashPaint);
     }
 
-    // Gap duration label
     if (block.gapStart != null && block.gapEnd != null) {
       final gap = block.gapEnd!.difference(block.gapStart!);
       final gapText = '${_formatDuration(gap)} sem gravacao';
@@ -1347,16 +1367,12 @@ class _CondensedTimelinePainter extends CustomPainter {
       final tp = TextPainter(
         text: TextSpan(
           text: gapText,
-          style: TextStyle(
-            color: Colors.white.withValues(alpha: 0.15),
-            fontSize: 10,
-          ),
+          style: TextStyle(color: Colors.white.withValues(alpha: 0.15), fontSize: 10),
         ),
         textDirection: TextDirection.ltr,
       );
       tp.layout();
 
-      // Background pill for readability
       final bgRect = Rect.fromCenter(
         center: Offset(size.width / 2, centerY),
         width: tp.width + 16,
@@ -1367,25 +1383,18 @@ class _CondensedTimelinePainter extends CustomPainter {
         Paint()..color = const Color(0xFF1A2530),
       );
 
-      tp.paint(canvas,
-          Offset((size.width - tp.width) / 2, centerY - 7));
+      tp.paint(canvas, Offset((size.width - tp.width) / 2, centerY - 7));
     }
   }
 
   String _formatDuration(Duration d) {
-    if (d.inHours > 0) {
-      return '${d.inHours}h ${d.inMinutes % 60}min';
-    }
-    if (d.inMinutes > 0) {
-      return '${d.inMinutes}min';
-    }
+    if (d.inHours > 0) return '${d.inHours}h ${d.inMinutes % 60}min';
+    if (d.inMinutes > 0) return '${d.inMinutes}min';
     return '${d.inSeconds}s';
   }
 
   @override
-  bool shouldRepaint(covariant _CondensedTimelinePainter old) {
-    return old.layout != layout || old.segments != segments;
-  }
+  bool shouldRepaint(covariant _TimelineBackgroundPainter old) => old.layout != layout;
 }
 
 // ─── BOTTOM BAR ─────────────────────────────────────────
