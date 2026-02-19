@@ -298,8 +298,29 @@ class DashboardCameraModel {
     this.hlsPath,
   });
 
-  factory DashboardCameraModel.fromJson(Map<String, dynamic> json) =>
-      _$DashboardCameraModelFromJson(json);
+  factory DashboardCameraModel.fromJson(Map<String, dynamic> json) {
+    // Extract mediamtx_path from active_stream nested object
+    String? hlsPath = json['hls_path'] as String?;
+    if (hlsPath == null && json['active_stream'] is Map<String, dynamic>) {
+      final stream = json['active_stream'] as Map<String, dynamic>;
+      final mediamtxPath = stream['mediamtx_path'] as String?;
+      if (mediamtxPath != null) {
+        hlsPath = '/hls/$mediamtxPath/index.m3u8';
+      }
+    }
+    return DashboardCameraModel(
+      id: json['id'] as String,
+      name: json['name'] as String,
+      slug: json['slug'] as String?,
+      isActive: json['is_active'] as bool? ?? false,
+      isOnline: json['is_online'] as bool? ?? false,
+      isRecording: json['is_recording'] as bool? ?? false,
+      manufacturer: json['manufacturer'] as String?,
+      location: json['location'] as String?,
+      snapshotUrl: json['snapshot_url'] as String?,
+      hlsPath: hlsPath,
+    );
+  }
 }
 
 @JsonSerializable(createToJson: false)

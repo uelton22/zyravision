@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
@@ -6,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:media_kit/media_kit.dart';
 import 'package:media_kit_video/media_kit_video.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../../../core/config/app_config.dart';
 import '../../../core/config/constants.dart';
@@ -314,12 +316,29 @@ class _LiveViewScreenState extends ConsumerState<LiveViewScreen> {
     return Duration(seconds: cumulativeSeconds);
   }
 
+  /// Check if a time falls within any recording range
+  bool _isTimeInRecordingRange(DateTime time) {
+    final timelineState = ref.read(timelineProvider(widget.cameraId));
+    for (final range in timelineState.ranges) {
+      if (!time.isBefore(range.start) && !time.isAfter(range.end)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   void _onTimelineTimeSelected(DateTime time) {
     // Block automatic timeline updates while user is interacting
     _userSeekingTimeline = true;
 
     final notifier = ref.read(timelineProvider(widget.cameraId).notifier);
     notifier.setPlaybackTime(time);
+
+    // Only attempt playback if the selected time falls within a recording range
+    if (!_isTimeInRecordingRange(time)) {
+      debugPrint('[HLS] _onTimelineTimeSelected time=$time — NO RECORDING at this time, skipping playback');
+      return;
+    }
 
     final date = '${time.year.toString().padLeft(4, '0')}-'
         '${time.month.toString().padLeft(2, '0')}-'
@@ -367,6 +386,22 @@ class _LiveViewScreenState extends ConsumerState<LiveViewScreen> {
       }
 
       cumulativeSeconds += dur;
+    }
+
+    // Player position exceeded all segments — reached end of recordings.
+    // Set playback time to the last segment's end and notify state.
+    if (segments.isNotEmpty) {
+      final lastSeg = segments.last;
+      final endTime = lastSeg.endsAt ??
+          lastSeg.startsAt?.add(Duration(seconds: lastSeg.durationSeconds));
+      if (endTime != null) {
+        ref
+            .read(timelineProvider(widget.cameraId).notifier)
+            .setPlaybackTime(endTime);
+        ref
+            .read(timelineProvider(widget.cameraId).notifier)
+            .setPlaying(false);
+      }
     }
   }
 
@@ -652,13 +687,316 @@ class _LiveViewScreenState extends ConsumerState<LiveViewScreen> {
     }
   }
 
+  Future<void> _downloadSegment(BuildContext ctx) async {
+    if (_currentSegmentId == null) return;
+
+    final token = await ref.read(secureStorageProvider).getToken();
+    final url =
+        '${AppConfig.apiBaseUrl}${ApiPaths.segmentDownload(_currentSegmentId!)}';
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(ctx).showSnackBar(
+      const SnackBar(content: Text('Baixando segmento...')),
+    );
+
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final downloadsDir = Directory('${dir.path}/ZyraVision');
+      if (!downloadsDir.existsSync()) {
+        downloadsDir.createSync(recursive: true);
+      }
+
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final filePath = '${downloadsDir.path}/gravacao_$timestamp.ts';
+
+      final dio = Dio();
+      await dio.download(
+        url,
+        filePath,
+        options: Options(
+          headers: {'Authorization': 'Bearer $token'},
+        ),
+      );
+      dio.close();
+
+      if (!mounted) return;
+
+      // Copy to Downloads folder (Android)
+      final externalDir = await getExternalStorageDirectory();
+      if (externalDir != null) {
+        // Navigate up from app-specific to shared Downloads
+        final downloadPath = externalDir.path
+            .replaceFirst(RegExp(r'/Android/data/.*'), '/Download');
+        final sharedDir = Directory(downloadPath);
+        if (sharedDir.existsSync()) {
+          final destFile = File('$downloadPath/zyravision_gravacao_$timestamp.ts');
+          await File(filePath).copy(destFile.path);
+          debugPrint('[Download] Saved to: ${destFile.path}');
+        }
+      }
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(ctx).clearSnackBars();
+      ScaffoldMessenger.of(ctx).showSnackBar(
+        const SnackBar(
+          content: Text('Download concluido! Salvo na pasta Downloads.'),
+          backgroundColor: ZyColors.success,
+        ),
+      );
+    } catch (e) {
+      debugPrint('[Download] Error: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(ctx).clearSnackBars();
+      ScaffoldMessenger.of(ctx).showSnackBar(
+        SnackBar(
+          content: Text('Erro no download: $e'),
+          backgroundColor: ZyColors.danger,
+        ),
+      );
+    }
+  }
+
+  void _showClipCreator(BuildContext ctx) {
+    final timelineState = ref.read(timelineProvider(widget.cameraId));
+    if (timelineState.data == null || timelineState.ranges.isEmpty) {
+      ScaffoldMessenger.of(ctx).showSnackBar(
+        const SnackBar(content: Text('Nenhuma gravacao disponivel para criar clip')),
+      );
+      return;
+    }
+
+    DateTime clipStart = timelineState.currentPlaybackTime ??
+        timelineState.ranges.first.start;
+    DateTime clipEnd = clipStart.add(const Duration(minutes: 5));
+
+    // Clamp to last recording end
+    final lastEnd = timelineState.ranges.last.end;
+    if (clipEnd.isAfter(lastEnd)) clipEnd = lastEnd;
+
+    showModalBottomSheet(
+      context: ctx,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setSheetState) {
+            final duration = clipEnd.difference(clipStart);
+            final durationLabel = duration.inMinutes > 0
+                ? '${duration.inMinutes}min ${duration.inSeconds % 60}s'
+                : '${duration.inSeconds}s';
+
+            return Padding(
+              padding: EdgeInsets.only(
+                left: ZySpacing.xl,
+                right: ZySpacing.xl,
+                top: ZySpacing.xl,
+                bottom: MediaQuery.of(context).padding.bottom + ZySpacing.xl,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 40, height: 4,
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.outline.withValues(alpha: 0.3),
+                        borderRadius: ZySpacing.borderRadiusFull,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: ZySpacing.xl),
+                  Text('Criar Clip', style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold)),
+                  const SizedBox(height: ZySpacing.base),
+                  // Start time
+                  ListTile(
+                    leading: const Icon(Icons.play_arrow, color: ZyColors.success),
+                    title: const Text('Inicio'),
+                    trailing: Text(
+                      '${clipStart.hour.toString().padLeft(2, '0')}:${clipStart.minute.toString().padLeft(2, '0')}:${clipStart.second.toString().padLeft(2, '0')}',
+                      style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.w600),
+                    ),
+                    subtitle: const Text('Posicao atual do playback'),
+                  ),
+                  // Duration slider
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: ZySpacing.base),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text('Duracao: $durationLabel', style: Theme.of(context).textTheme.bodyMedium),
+                            Text('Max: 30min', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Theme.of(context).colorScheme.outline)),
+                          ],
+                        ),
+                        Slider(
+                          value: duration.inSeconds.toDouble().clamp(10, 1800),
+                          min: 10,
+                          max: 1800,
+                          divisions: 179,
+                          label: durationLabel,
+                          onChanged: (val) {
+                            setSheetState(() {
+                              clipEnd = clipStart.add(Duration(seconds: val.round()));
+                              if (clipEnd.isAfter(lastEnd)) clipEnd = lastEnd;
+                            });
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                  // End time
+                  ListTile(
+                    leading: const Icon(Icons.stop, color: ZyColors.danger),
+                    title: const Text('Fim'),
+                    trailing: Text(
+                      '${clipEnd.hour.toString().padLeft(2, '0')}:${clipEnd.minute.toString().padLeft(2, '0')}:${clipEnd.second.toString().padLeft(2, '0')}',
+                      style: const TextStyle(fontFamily: 'monospace', fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                  const SizedBox(height: ZySpacing.base),
+                  // Download clip button
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      icon: const Icon(Icons.download),
+                      label: Text('Baixar clip ($durationLabel)'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: ZyColors.primary,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      onPressed: () {
+                        Navigator.pop(context);
+                        _downloadClip(ctx, clipStart, clipEnd);
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Future<void> _downloadClip(BuildContext ctx, DateTime start, DateTime end) async {
+    final token = await ref.read(secureStorageProvider).getToken();
+    final date = '${start.year}-${start.month.toString().padLeft(2, '0')}-${start.day.toString().padLeft(2, '0')}';
+
+    // Use HLS playlist with start_from and calculate duration to get the clip range
+    final startSeconds = _calculateHlsSeekPosition(start).inSeconds;
+    final endSeconds = _calculateHlsSeekPosition(end).inSeconds;
+    final durationSeconds = endSeconds - startSeconds;
+
+    if (durationSeconds <= 0) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(ctx).showSnackBar(
+        const SnackBar(content: Text('Duracao do clip invalida'), backgroundColor: ZyColors.danger),
+      );
+      return;
+    }
+
+    // Build HLS URL for the clip range
+    final hlsUrl = '${AppConfig.apiBaseUrl}${ApiPaths.cameraHlsPlaylist(widget.cameraId)}'
+        '?date=$date&start_from=$startSeconds&duration=$durationSeconds';
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(ctx).showSnackBar(
+      const SnackBar(content: Text('Baixando clip...')),
+    );
+
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final downloadsDir = Directory('${dir.path}/ZyraVision');
+      if (!downloadsDir.existsSync()) {
+        downloadsDir.createSync(recursive: true);
+      }
+
+      // Download the M3U8 first to get segment URLs
+      final dio = Dio();
+      final m3u8Response = await dio.get<String>(
+        hlsUrl,
+        options: Options(headers: {'Authorization': 'Bearer $token'}),
+      );
+
+      final m3u8Content = m3u8Response.data ?? '';
+      final segmentUrls = m3u8Content
+          .split('\n')
+          .where((line) => line.trim().isNotEmpty && !line.startsWith('#'))
+          .toList();
+
+      if (segmentUrls.isEmpty) {
+        dio.close();
+        if (!mounted) return;
+        ScaffoldMessenger.of(ctx).clearSnackBars();
+        ScaffoldMessenger.of(ctx).showSnackBar(
+          const SnackBar(content: Text('Nenhum segmento encontrado no intervalo'), backgroundColor: ZyColors.warning),
+        );
+        return;
+      }
+
+      // Download each segment and concatenate into a single TS file
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      final clipFile = File('${downloadsDir.path}/clip_$timestamp.ts');
+      final sink = clipFile.openWrite();
+
+      for (final segUrl in segmentUrls) {
+        final response = await dio.get<List<int>>(
+          segUrl,
+          options: Options(responseType: ResponseType.bytes),
+        );
+        if (response.data != null) {
+          sink.add(response.data!);
+        }
+      }
+
+      await sink.flush();
+      await sink.close();
+      dio.close();
+
+      // Copy to shared Downloads
+      final externalDir = await getExternalStorageDirectory();
+      if (externalDir != null) {
+        final downloadPath = externalDir.path
+            .replaceFirst(RegExp(r'/Android/data/.*'), '/Download');
+        final sharedDir = Directory(downloadPath);
+        if (sharedDir.existsSync()) {
+          final destFile = File('$downloadPath/zyravision_clip_$timestamp.ts');
+          await clipFile.copy(destFile.path);
+        }
+      }
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(ctx).clearSnackBars();
+      ScaffoldMessenger.of(ctx).showSnackBar(
+        SnackBar(
+          content: Text('Clip salvo! ${segmentUrls.length} segmento(s), ${durationSeconds}s'),
+          backgroundColor: ZyColors.success,
+        ),
+      );
+    } catch (e) {
+      debugPrint('[Clip] Error: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(ctx).clearSnackBars();
+      ScaffoldMessenger.of(ctx).showSnackBar(
+        SnackBar(content: Text('Erro ao criar clip: $e'), backgroundColor: ZyColors.danger),
+      );
+    }
+  }
+
   void _showSaveOptions(BuildContext context) {
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      builder: (context) {
+      builder: (sheetContext) {
         return Padding(
           padding: const EdgeInsets.all(ZySpacing.xl),
           child: Column(
@@ -669,7 +1007,7 @@ class _LiveViewScreenState extends ConsumerState<LiveViewScreen> {
                   width: 40,
                   height: 4,
                   decoration: BoxDecoration(
-                    color: Theme.of(context)
+                    color: Theme.of(sheetContext)
                         .colorScheme
                         .outline
                         .withValues(alpha: 0.3),
@@ -680,7 +1018,7 @@ class _LiveViewScreenState extends ConsumerState<LiveViewScreen> {
               const SizedBox(height: ZySpacing.xl),
               Text(
                 'Salvar',
-                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                style: Theme.of(sheetContext).textTheme.titleLarge?.copyWith(
                       fontWeight: FontWeight.bold,
                     ),
               ),
@@ -692,15 +1030,8 @@ class _LiveViewScreenState extends ConsumerState<LiveViewScreen> {
                     const Text('Baixar o segmento que esta reproduzindo'),
                 enabled: _currentSegmentId != null,
                 onTap: () {
-                  Navigator.pop(context);
-                  if (_currentSegmentId != null) {
-                    final url =
-                        '${AppConfig.apiBaseUrl}${ApiPaths.segmentDownload(_currentSegmentId!)}';
-                    debugPrint('[Download] URL: $url');
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Download iniciado...')),
-                    );
-                  }
+                  Navigator.pop(sheetContext);
+                  _downloadSegment(context);
                 },
               ),
               ListTile(
@@ -708,18 +1039,15 @@ class _LiveViewScreenState extends ConsumerState<LiveViewScreen> {
                 title: const Text('Criar clip'),
                 subtitle:
                     const Text('Recortar uma parte da gravacao'),
+                enabled: !_isLiveMode,
                 onTap: () {
-                  Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Funcao de clip em desenvolvimento'),
-                    ),
-                  );
+                  Navigator.pop(sheetContext);
+                  _showClipCreator(context);
                 },
               ),
               SizedBox(
                 height:
-                    MediaQuery.of(context).padding.bottom + ZySpacing.base,
+                    MediaQuery.of(sheetContext).padding.bottom + ZySpacing.base,
               ),
             ],
           ),
@@ -898,16 +1226,23 @@ class _VerticalTimelineState extends State<_VerticalTimeline> {
       }
     }
 
-    // Follow playback position when not user-scrolling (recording mode only)
+    // Follow playback position when not user-scrolling (recording mode only).
+    // Only auto-scroll if the playback time is within a recording range.
     if (!widget.isLiveMode &&
         !_isUserScrolling &&
         widget.currentPlaybackTime != null &&
         old.currentPlaybackTime != widget.currentPlaybackTime) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) {
-          _scrollToTime(widget.currentPlaybackTime!, animate: false);
-        }
-      });
+      final pTime = widget.currentPlaybackTime!;
+      final inRange = widget.timelineState.ranges.any(
+        (r) => !pTime.isBefore(r.start) && !pTime.isAfter(r.end),
+      );
+      if (inRange) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            _scrollToTime(pTime, animate: false);
+          }
+        });
+      }
     }
   }
 
@@ -951,54 +1286,87 @@ class _VerticalTimelineState extends State<_VerticalTimeline> {
   void _onScroll() {
     if (_programmaticScroll) return;
     if (_isUserScrolling && _scrollController.hasClients) {
-      final time = _offsetToTime(_scrollController.offset);
-      if (time != null) {
-        widget.onTimeSelected(time);
+      final offset = _scrollController.offset;
+      // Only trigger playback if scroll is within recording content area
+      if (offset <= _totalContentHeight) {
+        final time = _offsetToTime(offset);
+        if (time != null) {
+          widget.onTimeSelected(time);
+        }
       }
+      // If scrolled past content, do nothing — user sees "end of recordings"
     }
   }
 
   /// Convert scroll offset → real-world DateTime.
-  /// Returns null only if layout is empty.
+  /// Returns null if offset is beyond all recording blocks.
   DateTime? _offsetToTime(double offset) {
+    // Clamp offset to content area — never map beyond recordings
+    final clampedOffset = offset.clamp(0.0, _totalContentHeight);
+
     for (final block in _layout) {
-      if (offset < block.startY || offset > block.endY) continue;
+      if (clampedOffset < block.startY || clampedOffset > block.endY) continue;
 
       if (block.type == _BlockType.recording) {
         final range = block.range!;
         final fraction =
-            ((offset - block.startY) / block.height).clamp(0.0, 1.0);
+            ((clampedOffset - block.startY) / block.height).clamp(0.0, 1.0);
         final seconds = (range.duration.inSeconds * fraction).round();
         return range.start.add(Duration(seconds: seconds));
       } else {
         // In a gap — snap to nearest recording boundary
         final mid = block.startY + block.height / 2;
-        return offset < mid ? block.gapStart : block.gapEnd;
+        return clampedOffset < mid ? block.gapStart : block.gapEnd;
       }
     }
-    final ranges = widget.timelineState.ranges;
-    if (ranges.isNotEmpty) return ranges.last.end;
+
+    // Past all content — return null (no recording here)
     return null;
   }
 
   /// Convert real-world DateTime → scroll offset.
+  /// If time is outside any recording range, clamp to the nearest boundary.
   double _timeToOffset(DateTime time) {
+    // Check each recording block
     for (final block in _layout) {
       if (block.type != _BlockType.recording) continue;
       final range = block.range!;
-      if (!time.isBefore(range.start) && time.isBefore(range.end)) {
-        final fraction =
-            time.difference(range.start).inSeconds / range.duration.inSeconds;
-        return block.startY + (block.height * fraction);
+      // Inclusive end: time AT range.end maps to bottom of this block
+      if (!time.isBefore(range.start) && !time.isAfter(range.end)) {
+        final totalSecs = range.duration.inSeconds;
+        if (totalSecs <= 0) return block.startY;
+        final fraction = time.difference(range.start).inSeconds / totalSecs;
+        return block.startY + (block.height * fraction.clamp(0.0, 1.0));
       }
     }
-    return _totalContentHeight;
+
+    // Time is outside all recording ranges.
+    // Find the closest range boundary and snap to it.
+    if (_layout.isEmpty) return 0;
+
+    // If before first recording, snap to start
+    final firstRecBlock = _layout.firstWhere(
+      (b) => b.type == _BlockType.recording,
+      orElse: () => _layout.first,
+    );
+    if (firstRecBlock.range != null && time.isBefore(firstRecBlock.range!.start)) {
+      return firstRecBlock.startY;
+    }
+
+    // If after last recording, snap to end of last recording block
+    final lastRecBlock = _layout.lastWhere(
+      (b) => b.type == _BlockType.recording,
+      orElse: () => _layout.last,
+    );
+    return lastRecBlock.endY;
   }
 
   void _scrollToTime(DateTime time, {bool animate = true}) {
     if (!_scrollController.hasClients) return;
     final maxExtent = _scrollController.position.maxScrollExtent;
-    final target = _timeToOffset(time).clamp(0.0, maxExtent);
+    // Clamp to content area — never scroll past recordings into empty space
+    final contentMax = _totalContentHeight.clamp(0.0, maxExtent);
+    final target = _timeToOffset(time).clamp(0.0, contentMax);
     _programmaticScroll = true;
     if (animate) {
       _scrollController
@@ -1066,43 +1434,69 @@ class _VerticalTimelineState extends State<_VerticalTimeline> {
       );
     }
 
-    final viewportPadding = MediaQuery.of(context).size.height * 0.4;
-
     final segments = widget.timelineState.data?.segments ?? [];
     final screenWidth = MediaQuery.of(context).size.width;
 
     const playheadReserved = 32.0;
+    const endIndicatorHeight = 60.0;
+
+    // Use the last segment's real end time for the indicator
+    final lastEnd = _layout.isNotEmpty && _layout.last.type == _BlockType.recording
+        ? _layout.last.range?.end
+        : (widget.timelineState.ranges.isNotEmpty
+            ? widget.timelineState.ranges.last.end
+            : null);
 
     return Container(
       color: const Color(0xFF1A2530),
-      child: NotificationListener<ScrollNotification>(
-        onNotification: (notification) {
-          if (notification is ScrollStartNotification &&
-              notification.dragDetails != null) {
-            _isUserScrolling = true;
-          } else if (notification is ScrollEndNotification) {
-            _isUserScrolling = false;
-          }
-          return false;
-        },
-        child: SingleChildScrollView(
-          controller: _scrollController,
-          physics: const ClampingScrollPhysics(),
-          padding: const EdgeInsets.only(top: playheadReserved),
-          child: SizedBox(
-            height: _totalContentHeight + viewportPadding,
-            width: screenWidth,
-            child: Stack(
-              children: [
-                CustomPaint(
-                  size: Size(screenWidth, _totalContentHeight + viewportPadding),
-                  painter: _TimelineBackgroundPainter(layout: _layout),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // The viewport height available for the timeline
+          final viewportHeight = constraints.maxHeight;
+          // Bottom padding must be at least viewportHeight so the last recording
+          // can be scrolled all the way up to the playhead at the top.
+          final bottomPadding = viewportHeight;
+          final totalHeight = _totalContentHeight + endIndicatorHeight + bottomPadding;
+
+          return NotificationListener<ScrollNotification>(
+            onNotification: (notification) {
+              if (notification is ScrollStartNotification &&
+                  notification.dragDetails != null) {
+                _isUserScrolling = true;
+              } else if (notification is ScrollEndNotification) {
+                _isUserScrolling = false;
+              }
+              return false;
+            },
+            child: SingleChildScrollView(
+              controller: _scrollController,
+              physics: const ClampingScrollPhysics(),
+              padding: const EdgeInsets.only(top: playheadReserved),
+              child: SizedBox(
+                height: totalHeight,
+                width: screenWidth,
+                child: Stack(
+                  children: [
+                    CustomPaint(
+                      size: Size(screenWidth, totalHeight),
+                      painter: _TimelineBackgroundPainter(layout: _layout),
+                    ),
+                    ..._buildThumbnailTiles(segments, screenWidth),
+                    if (_layout.isNotEmpty)
+                      Positioned(
+                        top: _totalContentHeight + 10,
+                        left: 0,
+                        right: 0,
+                        child: _EndOfRecordingsIndicator(
+                          lastRecordingEnd: lastEnd,
+                        ),
+                      ),
+                  ],
                 ),
-                ..._buildThumbnailTiles(segments, screenWidth),
-              ],
+              ),
             ),
-          ),
-        ),
+          );
+        },
       ),
     );
   }
@@ -1261,6 +1655,49 @@ class _FixedPlayhead extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Indicator shown at the bottom of the timeline when there are no more recordings.
+class _EndOfRecordingsIndicator extends StatelessWidget {
+  final DateTime? lastRecordingEnd;
+
+  const _EndOfRecordingsIndicator({this.lastRecordingEnd});
+
+  @override
+  Widget build(BuildContext context) {
+    final timeStr = lastRecordingEnd != null
+        ? '${lastRecordingEnd!.hour.toString().padLeft(2, '0')}:${lastRecordingEnd!.minute.toString().padLeft(2, '0')}'
+        : '';
+
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 40,
+            height: 1,
+            color: Colors.white.withValues(alpha: 0.08),
+          ),
+          const SizedBox(height: 10),
+          Icon(
+            Icons.videocam_off_outlined,
+            size: 18,
+            color: Colors.white.withValues(alpha: 0.2),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            timeStr.isNotEmpty
+                ? 'Fim das gravacoes ($timeStr)'
+                : 'Fim das gravacoes',
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.2),
+              fontSize: 11,
+            ),
+          ),
+        ],
       ),
     );
   }

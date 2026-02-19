@@ -117,7 +117,7 @@ class _AdminDashboard extends ConsumerWidget {
             ),
             const SizedBox(height: ZySpacing.md),
             SizedBox(
-              height: 185,
+              height: 145,
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
                 itemCount: data.cameras.length,
@@ -187,7 +187,7 @@ class _TenantDashboard extends ConsumerWidget {
             ),
             const SizedBox(height: ZySpacing.md),
             SizedBox(
-              height: 185,
+              height: 145,
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
                 itemCount: data.cameras.length,
