@@ -55,7 +55,8 @@ class _LiveViewScreenState extends ConsumerState<LiveViewScreen> {
   bool _isLoadingSegment = false;
   String? _currentHlsDate;
   int _currentHlsStartFrom = 0;
-  bool _userSeekingTimeline = false; // Blocks _updateTimelinePosition during user scroll + playlist reload
+  bool _userSeekingTimeline = false;
+  DateTime _liveClockTime = DateTime.now();
 
   @override
   void initState() {
@@ -132,6 +133,9 @@ class _LiveViewScreenState extends ConsumerState<LiveViewScreen> {
 
     _positionTimer = Timer.periodic(const Duration(seconds: 1), (_) {
       _updateTimelinePosition();
+      if (_isLiveMode && mounted) {
+        setState(() => _liveClockTime = DateTime.now());
+      }
     });
   }
 
@@ -211,6 +215,7 @@ class _LiveViewScreenState extends ConsumerState<LiveViewScreen> {
       _currentHlsDate = null;
       _currentHlsStartFrom = 0;
       _errorMessage = null;
+      _liveClockTime = DateTime.now();
     });
     ref.read(timelineProvider(widget.cameraId).notifier).setPlaying(false);
     _initLiveStream();
@@ -419,15 +424,32 @@ class _LiveViewScreenState extends ConsumerState<LiveViewScreen> {
             timelineState: timelineState,
             onAlertTap: () {},
           ),
-          // Vertical timeline
+          // Vertical timeline with playhead overlay
           Expanded(
-            child: _VerticalTimeline(
-              timelineState: timelineState,
-              isLiveMode: _isLiveMode,
-              onTimeSelected: _onTimelineTimeSelected,
-              currentPlaybackTime: _isLiveMode
-                  ? null
-                  : timelineState.currentPlaybackTime,
+            child: Stack(
+              children: [
+                // Timeline content (takes full area)
+                _VerticalTimeline(
+                  timelineState: timelineState,
+                  isLiveMode: _isLiveMode,
+                  onTimeSelected: _onTimelineTimeSelected,
+                  currentPlaybackTime: _isLiveMode
+                      ? null
+                      : timelineState.currentPlaybackTime,
+                ),
+                // Fixed playhead overlay at top
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  child: _FixedPlayhead(
+                    time: _isLiveMode
+                        ? _liveClockTime
+                        : (timelineState.currentPlaybackTime ?? DateTime.now()),
+                    isLive: _isLiveMode,
+                  ),
+                ),
+              ],
             ),
           ),
           // Bottom bar
@@ -838,30 +860,47 @@ class _VerticalTimelineState extends State<_VerticalTimeline> {
     super.initState();
     _scrollController.addListener(_onScroll);
     _buildLayout();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _scrollToTime(
-          widget.currentPlaybackTime ?? _firstRecordingTime,
-          animate: false);
-    });
-  }
-
-  @override
-  void didUpdateWidget(_VerticalTimeline old) {
-    super.didUpdateWidget(old);
-
-    if (old.timelineState.ranges != widget.timelineState.ranges ||
-        old.timelineState.selectedDate != widget.timelineState.selectedDate) {
-      _buildLayout();
+    if (!widget.isLiveMode) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         _scrollToTime(
             widget.currentPlaybackTime ?? _firstRecordingTime,
             animate: false);
       });
     }
+  }
 
-    // Follow playback position when not user-scrolling
-    // Must defer to avoid setState during build (scroll notifications → AppBar)
-    if (!_isUserScrolling &&
+  @override
+  void didUpdateWidget(_VerticalTimeline old) {
+    super.didUpdateWidget(old);
+
+    // When switching to live mode, scroll timeline back to the top
+    if (widget.isLiveMode && !old.isLiveMode) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (_scrollController.hasClients) {
+          _scrollController.animateTo(
+            0,
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeOut,
+          );
+        }
+      });
+    }
+
+    if (old.timelineState.ranges != widget.timelineState.ranges ||
+        old.timelineState.selectedDate != widget.timelineState.selectedDate) {
+      _buildLayout();
+      if (!widget.isLiveMode) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _scrollToTime(
+              widget.currentPlaybackTime ?? _firstRecordingTime,
+              animate: false);
+        });
+      }
+    }
+
+    // Follow playback position when not user-scrolling (recording mode only)
+    if (!widget.isLiveMode &&
+        !_isUserScrolling &&
         widget.currentPlaybackTime != null &&
         old.currentPlaybackTime != widget.currentPlaybackTime) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -973,12 +1012,6 @@ class _VerticalTimelineState extends State<_VerticalTimeline> {
     }
   }
 
-  DateTime get _playheadTime {
-    if (widget.currentPlaybackTime != null) return widget.currentPlaybackTime!;
-    if (!_scrollController.hasClients) return DateTime.now();
-    return _offsetToTime(_scrollController.offset) ?? DateTime.now();
-  }
-
   @override
   void dispose() {
     _scrollController.removeListener(_onScroll);
@@ -1038,50 +1071,38 @@ class _VerticalTimelineState extends State<_VerticalTimeline> {
     final segments = widget.timelineState.data?.segments ?? [];
     final screenWidth = MediaQuery.of(context).size.width;
 
+    const playheadReserved = 32.0;
+
     return Container(
       color: const Color(0xFF1A2530),
-      child: Stack(
-        children: [
-          NotificationListener<ScrollNotification>(
-            onNotification: (notification) {
-              if (notification is ScrollStartNotification &&
-                  notification.dragDetails != null) {
-                _isUserScrolling = true;
-              } else if (notification is ScrollEndNotification) {
-                _isUserScrolling = false;
-              }
-              return false;
-            },
-            child: SingleChildScrollView(
-              controller: _scrollController,
-              physics: const ClampingScrollPhysics(),
-              child: SizedBox(
-                height: _totalContentHeight + viewportPadding,
-                width: screenWidth,
-                child: Stack(
-                  children: [
-                    // Background paint: gap indicators and time labels
-                    CustomPaint(
-                      size: Size(screenWidth, _totalContentHeight + viewportPadding),
-                      painter: _TimelineBackgroundPainter(layout: _layout),
-                    ),
-                    // Thumbnail tiles positioned per-segment
-                    ..._buildThumbnailTiles(segments, screenWidth),
-                  ],
+      child: NotificationListener<ScrollNotification>(
+        onNotification: (notification) {
+          if (notification is ScrollStartNotification &&
+              notification.dragDetails != null) {
+            _isUserScrolling = true;
+          } else if (notification is ScrollEndNotification) {
+            _isUserScrolling = false;
+          }
+          return false;
+        },
+        child: SingleChildScrollView(
+          controller: _scrollController,
+          physics: const ClampingScrollPhysics(),
+          padding: const EdgeInsets.only(top: playheadReserved),
+          child: SizedBox(
+            height: _totalContentHeight + viewportPadding,
+            width: screenWidth,
+            child: Stack(
+              children: [
+                CustomPaint(
+                  size: Size(screenWidth, _totalContentHeight + viewportPadding),
+                  painter: _TimelineBackgroundPainter(layout: _layout),
                 ),
-              ),
+                ..._buildThumbnailTiles(segments, screenWidth),
+              ],
             ),
           ),
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: _FixedPlayhead(
-              time: _playheadTime,
-              isLive: widget.isLiveMode,
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
