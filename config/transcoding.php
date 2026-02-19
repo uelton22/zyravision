@@ -100,8 +100,8 @@ return [
 
     'segment' => [
         'duration' => 60, // seconds (matches mediamtx recordSegmentDuration: 1m)
-        'format' => 'mp4',
-        'filename_pattern' => '%Y-%m-%d_%H-%M-%S.mp4',
+        'format' => 'mpegts',
+        'filename_pattern' => '%Y-%m-%d_%H-%M-%S.ts',
     ],
 
     /*

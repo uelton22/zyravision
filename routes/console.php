@@ -37,6 +37,10 @@ Schedule::job(new CleanupExpiredRecordingsJob)->dailyAt('03:00')->name('cleanup-
 Schedule::job(new \App\Jobs\CleanupExpiredSegmentsJob)->dailyAt('03:30')->name('cleanup-expired-segments');
 Schedule::job(new UpdateStorageQuotaJob)->everyFifteenMinutes()->name('update-storage-quotas');
 
+// Self-healing: regenera thumbnails faltantes e corrige timestamps inconsistentes
+Schedule::command('segments:generate-thumbnails --limit=200')->everyFiveMinutes()->name('generate-missing-thumbnails');
+Schedule::command('segments:fix-timestamps')->everyFifteenMinutes()->name('fix-segment-timestamps');
+
 // ─── Transcoder Cleanup ─────────────────────────────────
 
 Schedule::command('transcoder:cleanup')->everyFiveMinutes()->name('transcoder-cleanup');

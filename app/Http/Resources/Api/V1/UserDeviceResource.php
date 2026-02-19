@@ -21,7 +21,7 @@ class UserDeviceResource extends JsonResource
             'push_provider' => $this->push_provider,
             'last_active_at' => $this->last_active_at?->toISOString(),
             'revoked_at' => $this->revoked_at?->toISOString(),
-            'created_at' => $this->created_at->toISOString(),
+            'created_at' => $this->created_at?->toISOString(),
         ];
     }
 }

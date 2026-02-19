@@ -33,8 +33,8 @@ class CameraResource extends JsonResource
             'location' => $this->location,
             'description' => $this->description,
             'snapshot_url' => $this->snapshot_url,
-            'created_at' => $this->created_at->toISOString(),
-            'updated_at' => $this->updated_at->toISOString(),
+            'created_at' => $this->created_at?->toISOString(),
+            'updated_at' => $this->updated_at?->toISOString(),
 
             // Conditional includes
             'device' => $this->whenLoaded('device', fn () => new DeviceResource($this->device)),

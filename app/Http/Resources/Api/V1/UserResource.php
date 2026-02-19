@@ -18,8 +18,8 @@ class UserResource extends JsonResource
             'is_active' => $this->is_active,
             'tenant_id' => $this->tenant_id,
             'last_login_at' => $this->last_login_at?->toISOString(),
-            'created_at' => $this->created_at->toISOString(),
-            'updated_at' => $this->updated_at->toISOString(),
+            'created_at' => $this->created_at?->toISOString(),
+            'updated_at' => $this->updated_at?->toISOString(),
 
             // Conditional includes
             'tenant' => $this->whenLoaded('tenant', fn () => new TenantResource($this->tenant)),

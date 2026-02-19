@@ -1,12 +1,13 @@
 <script setup lang="ts">
 /**
- * Cameras/Recordings — Timeline profissional de gravacoes (estilo VMS).
- * Cursor fixo no centro, esteira de horarios reais do relogio,
- * arrastar para navegar, barras de segmentos com cor indicando gravacao.
+ * Cameras/Recordings — HLS-based continuous playback with VMS-style timeline.
+ * Uses hls.js to play a dynamic M3U8 playlist containing all segments for the day.
+ * No flickering between segments — seamless playback like professional VMS systems.
  */
 
-import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import { Head, router } from '@inertiajs/vue3';
+import Hls from 'hls.js';
 import AuthenticatedLayout from '@/Layouts/AuthenticatedLayout.vue';
 import {
     ZyPageHeader, ZyBreadcrumb, ZyCard, ZyButton, ZyBadge, ZyInput,
@@ -31,6 +32,7 @@ interface TimelineSegment {
     stream_url: string;
     has_local?: boolean;
     has_remote?: boolean;
+    playlist_offset_seconds: number;
 }
 
 interface AvailableDate {
@@ -49,6 +51,7 @@ interface Props {
     segments: TimelineSegment[];
     selectedDate: string;
     availableDates: AvailableDate[];
+    hlsPlaylistUrl: string;
     stats: {
         total_segments: number;
         total_size: number;
@@ -97,7 +100,6 @@ function goNextDay() {
 }
 
 // ─── Time Helpers ────────────────────
-// All times in seconds from midnight (0 = 00:00:00, 86400 = 24:00:00)
 function dateToSecondsFromMidnight(dateStr: string): number {
     const d = new Date(dateStr);
     return d.getHours() * 3600 + d.getMinutes() * 60 + d.getSeconds();
@@ -116,57 +118,24 @@ function secondsToShortTime(secs: number): string {
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
-// ─── Parsed Segments with real timestamps ────
+// ─── Parsed Segments ────────────────
 interface ParsedSegment {
     index: number;
     seg: TimelineSegment;
-    startSec: number;    // seconds from midnight
-    endSec: number;      // seconds from midnight
+    startSec: number;
+    endSec: number;
     durationSec: number;
+    playlistOffset: number;
 }
 
-// Max reasonable duration for a single segment (10 min).
-// Anything larger indicates corrupted data (e.g., duration calculated from now() after a long pause).
 const MAX_SEGMENT_DURATION = 600;
 
 const parsedSegments = computed<ParsedSegment[]>(() => {
-    return props.segments.map((seg, i, arr) => {
+    return props.segments.map((seg, i) => {
         const startSec = dateToSecondsFromMidnight(seg.starts_at);
-
-        // Determine actual duration with safety checks
-        let dur = seg.duration_seconds || 60;
-
-        // If ends_at exists, prefer calculating from actual timestamps
-        if (seg.ends_at) {
-            const endFromTimestamp = dateToSecondsFromMidnight(seg.ends_at);
-            const calcDur = endFromTimestamp - startSec;
-            if (calcDur > 0 && calcDur <= MAX_SEGMENT_DURATION) {
-                dur = calcDur;
-            }
-        }
-
-        // Safety cap: if duration is unreasonably large, estimate from neighbors or cap
-        if (dur > MAX_SEGMENT_DURATION) {
-            // Try to estimate from the next segment's start time
-            const nextSeg = arr[i + 1];
-            if (nextSeg) {
-                const nextStart = dateToSecondsFromMidnight(nextSeg.starts_at);
-                const gap = nextStart - startSec;
-                if (gap > 0 && gap <= MAX_SEGMENT_DURATION) {
-                    dur = gap;
-                } else {
-                    dur = MAX_SEGMENT_DURATION;
-                }
-            } else {
-                // Last segment: use average of previous segments or default 60s
-                const prevDurations = arr.slice(Math.max(0, i - 5), i)
-                    .map(s => s.duration_seconds)
-                    .filter(d => d > 0 && d <= MAX_SEGMENT_DURATION);
-                dur = prevDurations.length > 0
-                    ? Math.round(prevDurations.reduce((a, b) => a + b, 0) / prevDurations.length)
-                    : 60;
-            }
-        }
+        // Use duration_seconds directly from backend to stay consistent
+        // with playlist_offset_seconds and the M3U8 #EXTINF values
+        const dur = Math.min(seg.duration_seconds || 60, MAX_SEGMENT_DURATION);
 
         return {
             index: i,
@@ -174,82 +143,165 @@ const parsedSegments = computed<ParsedSegment[]>(() => {
             startSec,
             endSec: startSec + dur,
             durationSec: dur,
+            playlistOffset: seg.playlist_offset_seconds,
         };
     });
 });
 
-// Timeline range: from first segment start to last segment end
-const timelineStartSec = computed(() => {
+// Total HLS playlist duration
+const totalPlaylistDuration = computed(() => {
     if (!parsedSegments.value.length) return 0;
-    // Round down to nearest 30 min for nice start
-    const first = parsedSegments.value[0].startSec;
-    return Math.floor(first / 1800) * 1800;
-});
-
-const timelineEndSec = computed(() => {
-    if (!parsedSegments.value.length) return 86400;
     const last = parsedSegments.value[parsedSegments.value.length - 1];
-    // Round up to nearest 30 min
-    return Math.ceil(last.endSec / 1800) * 1800;
+    return last.playlistOffset + last.durationSec;
 });
 
-const timelineSpanSec = computed(() => timelineEndSec.value - timelineStartSec.value);
-
-// ─── Segment Playback ────────────────
-const currentSegmentIndex = ref(0);
-const currentSegment = computed(() =>
-    props.segments.length > 0 ? props.segments[currentSegmentIndex.value] : null,
-);
-const activeVideoUrl = computed(() => currentSegment.value?.stream_url ?? null);
-
-// ─── Video Player ────────────────────
+// ─── HLS Player ──────────────────────
 const videoRef = ref<HTMLVideoElement | null>(null);
+let hlsInstance: Hls | null = null;
 const isPlaying = ref(false);
 const isMuted = ref(false);
 const currentTime = ref(0);
 const duration = ref(0);
-const buffered = ref(0);
 const volume = ref(1);
 const playbackRate = ref(1);
 const isVideoReady = ref(false);
 const videoError = ref(false);
-const shouldAutoPlay = ref(false);
-const pendingSeekTime = ref<number | null>(null);
+const hlsLoaded = ref(false);
 
-// Current absolute time in seconds from midnight
-const currentAbsoluteTime = computed(() => {
-    if (!parsedSegments.value.length) return 0;
-    const ps = parsedSegments.value[currentSegmentIndex.value];
-    if (!ps) return 0;
-    return ps.startSec + currentTime.value;
+// Track the current playlist offset so we can map player position → absolute time
+const currentStartFrom = ref(0);
+
+// Map HLS player position → real-world absolute time (seconds from midnight).
+// The player always starts at 0 relative to the trimmed playlist,
+// so we add currentStartFrom to get the cumulative playlist position.
+function playlistPosToAbsoluteTime(pos: number): number {
+    const cumulativePos = pos + currentStartFrom.value;
+    for (const ps of parsedSegments.value) {
+        if (cumulativePos >= ps.playlistOffset && cumulativePos < ps.playlistOffset + ps.durationSec) {
+            return ps.startSec + (cumulativePos - ps.playlistOffset);
+        }
+    }
+    if (parsedSegments.value.length > 0) {
+        const last = parsedSegments.value[parsedSegments.value.length - 1];
+        return last.endSec;
+    }
+    return 0;
+}
+
+const currentAbsoluteTime = computed(() => playlistPosToAbsoluteTime(currentTime.value));
+
+const currentSegmentIndex = computed(() => {
+    const cumulativePos = currentTime.value + currentStartFrom.value;
+    for (const ps of parsedSegments.value) {
+        if (cumulativePos >= ps.playlistOffset && cumulativePos < ps.playlistOffset + ps.durationSec) {
+            return ps.index;
+        }
+    }
+    return 0;
 });
 
-// ═══════════════════════════════════════
-// ─── VMS-Style Timeline (fixed cursor) ──
-// ═══════════════════════════════════════
+function createHlsInstance(): Hls {
+    return new Hls({
+        enableWorker: true,
+        lowLatencyMode: false,
+        maxBufferLength: 10,
+        maxMaxBufferLength: 30,
+        maxBufferSize: 30 * 1000 * 1000,
+        maxBufferHole: 0.5,
+        backBufferLength: 10,
+        startFragPrefetch: false,
+        appendErrorMaxRetry: 5,
+        xhrSetup: (xhr) => {
+            xhr.withCredentials = true;
+        },
+    });
+}
+
+/**
+ * Load (or reload) the HLS playlist starting from a specific cumulative offset.
+ * This mirrors the mobile app's approach: instead of seeking within a loaded playlist
+ * (which overflows the browser's SourceBuffer with 40MB segments), we request
+ * a trimmed M3U8 from the backend. The player always starts at position 0.
+ */
+function loadPlaylistFrom(startFromSeconds: number = 0) {
+    if (!videoRef.value || !props.hlsPlaylistUrl || !props.segments.length) return;
+
+    destroyHlsPlayer();
+    currentStartFrom.value = startFromSeconds;
+
+    const url = startFromSeconds > 0
+        ? `${props.hlsPlaylistUrl}&start_from=${startFromSeconds}`
+        : props.hlsPlaylistUrl;
+
+    if (Hls.isSupported()) {
+        hlsInstance = createHlsInstance();
+
+        hlsInstance.loadSource(url);
+        hlsInstance.attachMedia(videoRef.value);
+
+        hlsInstance.on(Hls.Events.MANIFEST_PARSED, () => {
+            hlsLoaded.value = true;
+            isVideoReady.value = true;
+            videoError.value = false;
+            if (videoRef.value) {
+                duration.value = videoRef.value.duration || totalPlaylistDuration.value;
+                videoRef.value.playbackRate = playbackRate.value;
+                videoRef.value.muted = isMuted.value;
+                videoRef.value.play().catch(() => {});
+            }
+        });
+
+        hlsInstance.on(Hls.Events.ERROR, (_event, data) => {
+            if (data.fatal) {
+                console.error('[HLS] Fatal:', data.type, data.details);
+                switch (data.type) {
+                    case Hls.ErrorTypes.NETWORK_ERROR:
+                        hlsInstance?.startLoad();
+                        break;
+                    case Hls.ErrorTypes.MEDIA_ERROR:
+                        hlsInstance?.recoverMediaError();
+                        break;
+                    default:
+                        videoError.value = true;
+                        break;
+                }
+            }
+        });
+    } else if (videoRef.value.canPlayType('application/vnd.apple.mpegurl')) {
+        videoRef.value.src = url;
+        videoRef.value.addEventListener('loadedmetadata', () => {
+            hlsLoaded.value = true;
+            isVideoReady.value = true;
+        });
+    }
+}
+
+function initHlsPlayer() {
+    loadPlaylistFrom(0);
+}
+
+function destroyHlsPlayer() {
+    if (hlsInstance) {
+        hlsInstance.destroy();
+        hlsInstance = null;
+    }
+    hlsLoaded.value = false;
+    isVideoReady.value = false;
+}
+
+// ─── VMS-Style Timeline ──────────────
 const timelineContainerRef = ref<HTMLDivElement | null>(null);
 const isDragging = ref(false);
 const didDragThisGesture = ref(false);
 const dragStartX = ref(0);
 const dragStartScrollTime = ref(0);
 
-// Zoom levels: seconds visible in the viewport
-const ZOOM_LEVELS = [1800, 3600, 7200, 14400, 28800]; // 30m, 1h, 2h, 4h, 8h
-const zoomIndex = ref(2); // Start at 2h view
+const ZOOM_LEVELS = [1800, 3600, 7200, 14400, 28800];
+const zoomIndex = ref(2);
 const visibleSeconds = computed(() => ZOOM_LEVELS[zoomIndex.value]);
 
-// The "scroll position" is the absolute second at the center of the viewport
 const scrollCenterSec = ref(0);
 
-// Initialize scroll position
-onMounted(() => {
-    if (parsedSegments.value.length > 0) {
-        scrollCenterSec.value = parsedSegments.value[0].startSec;
-    }
-    document.addEventListener('keydown', onKeyDown);
-});
-
-// Keep scroll following playback
 const isFollowingPlayback = ref(true);
 
 watch(currentAbsoluteTime, (newTime) => {
@@ -258,24 +310,21 @@ watch(currentAbsoluteTime, (newTime) => {
     }
 });
 
-// Derived: visible time window
 const viewStartSec = computed(() => scrollCenterSec.value - visibleSeconds.value / 2);
 const viewEndSec = computed(() => scrollCenterSec.value + visibleSeconds.value / 2);
 
-// Convert absolute seconds to pixel position in the timeline
 function secToPercent(sec: number): number {
     return ((sec - viewStartSec.value) / visibleSeconds.value) * 100;
 }
 
-// Time markers for the visible window
 const visibleTimeMarkers = computed(() => {
     const span = visibleSeconds.value;
     let interval: number;
-    if (span <= 1800) interval = 300;       // every 5 min for 30m view
-    else if (span <= 3600) interval = 600;  // every 10 min for 1h view
-    else if (span <= 7200) interval = 900;  // every 15 min for 2h view
-    else if (span <= 14400) interval = 1800; // every 30 min for 4h view
-    else interval = 3600;                    // every 1h for 8h view
+    if (span <= 1800) interval = 300;
+    else if (span <= 3600) interval = 600;
+    else if (span <= 7200) interval = 900;
+    else if (span <= 14400) interval = 1800;
+    else interval = 3600;
 
     const markers: { sec: number; label: string; percent: number; isMajor: boolean }[] = [];
     const start = Math.ceil(viewStartSec.value / interval) * interval;
@@ -293,7 +342,6 @@ const visibleTimeMarkers = computed(() => {
     return markers;
 });
 
-// Visible segment bars (only segments in view); cada barra = um segmento clicavel
 const visibleSegmentBars = computed(() => {
     return parsedSegments.value
         .filter(ps => ps.endSec > viewStartSec.value && ps.startSec < viewEndSec.value)
@@ -311,10 +359,9 @@ const visibleSegmentBars = computed(() => {
         });
 });
 
-// Playhead position (cursor fixo no centro = 50%)
 const playheadPercent = computed(() => secToPercent(currentAbsoluteTime.value));
 
-// ─── Timeline Mouse/Touch Events ─────
+// ─── Timeline Events ─────────────────
 function onTimelineMouseDown(e: MouseEvent) {
     isDragging.value = true;
     didDragThisGesture.value = false;
@@ -331,7 +378,6 @@ function onTimelineMouseMove(e: MouseEvent) {
     didDragThisGesture.value = true;
     const containerWidth = timelineContainerRef.value.clientWidth;
     const deltaX = e.clientX - dragStartX.value;
-    // Moving mouse right = going back in time (timeline moves right, earlier times appear)
     const deltaSec = -(deltaX / containerWidth) * visibleSeconds.value;
     scrollCenterSec.value = dragStartScrollTime.value + deltaSec;
 }
@@ -361,13 +407,8 @@ function onTimelineWheel(e: WheelEvent) {
     }
 }
 
-function zoomIn() {
-    if (zoomIndex.value > 0) zoomIndex.value--;
-}
-
-function zoomOut() {
-    if (zoomIndex.value < ZOOM_LEVELS.length - 1) zoomIndex.value++;
-}
+function zoomIn() { if (zoomIndex.value > 0) zoomIndex.value--; }
+function zoomOut() { if (zoomIndex.value < ZOOM_LEVELS.length - 1) zoomIndex.value++; }
 
 function followPlayback() {
     isFollowingPlayback.value = true;
@@ -375,42 +416,36 @@ function followPlayback() {
 }
 
 // ─── Seek to absolute time ───────────
+// Finds the cumulative playlist offset for the given absolute time, then reloads
+// the playlist from that offset. This avoids SourceBuffer overflow.
 function seekToAbsoluteTime(absSec: number) {
+    // Find which parsed segment contains this time
+    let targetOffset = 0;
     for (const ps of parsedSegments.value) {
         if (absSec >= ps.startSec && absSec < ps.endSec) {
-            const localTime = absSec - ps.startSec;
-            if (ps.index !== currentSegmentIndex.value) {
-                pendingSeekTime.value = localTime;
-                shouldAutoPlay.value = isPlaying.value;
-                currentSegmentIndex.value = ps.index;
-            } else {
-                if (videoRef.value) videoRef.value.currentTime = localTime;
-            }
-            scrollCenterSec.value = absSec;
-            return;
+            targetOffset = ps.playlistOffset + (absSec - ps.startSec);
+            break;
         }
-    }
-    // If clicked in a gap, find nearest segment
-    let nearest = parsedSegments.value[0];
-    let minDist = Infinity;
-    for (const ps of parsedSegments.value) {
-        const dist = Math.min(Math.abs(absSec - ps.startSec), Math.abs(absSec - ps.endSec));
-        if (dist < minDist) {
-            minDist = dist;
-            nearest = ps;
+        if (absSec < ps.startSec) {
+            targetOffset = ps.playlistOffset;
+            break;
         }
+        targetOffset = ps.playlistOffset + ps.durationSec;
     }
-    if (nearest) {
-        const localTime = absSec < nearest.startSec ? 0 : nearest.durationSec - 0.1;
-        if (nearest.index !== currentSegmentIndex.value) {
-            pendingSeekTime.value = Math.max(0, localTime);
-            shouldAutoPlay.value = isPlaying.value;
-            currentSegmentIndex.value = nearest.index;
-        } else {
-            if (videoRef.value) videoRef.value.currentTime = Math.max(0, localTime);
-        }
-        scrollCenterSec.value = nearest.startSec + Math.max(0, localTime);
-    }
+
+    scrollCenterSec.value = absSec;
+    isFollowingPlayback.value = true;
+    loadPlaylistFrom(Math.floor(targetOffset));
+}
+
+// ─── Jump to specific segment ────────
+function jumpToSegment(idx: number) {
+    if (idx < 0 || idx >= parsedSegments.value.length) return;
+    const ps = parsedSegments.value[idx];
+
+    scrollCenterSec.value = ps.startSec;
+    isFollowingPlayback.value = true;
+    loadPlaylistFrom(Math.floor(ps.playlistOffset));
 }
 
 // ─── Video Controls ──────────────────
@@ -428,13 +463,6 @@ function toggleMute() {
     if (!videoRef.value) return;
     isMuted.value = !isMuted.value;
     videoRef.value.muted = isMuted.value;
-}
-
-function setVolume(v: number) {
-    if (!videoRef.value) return;
-    volume.value = v;
-    videoRef.value.volume = v;
-    isMuted.value = v === 0;
 }
 
 function setPlaybackRate(rate: number) {
@@ -459,90 +487,43 @@ function toggleFullscreen() {
     }
 }
 
-function jumpToSegment(idx: number) {
-    const ps = parsedSegments.value[idx];
-    if (!ps) return;
-
-    const isSameSegment = idx === currentSegmentIndex.value;
-    if (isSameSegment) {
-        videoRef.value?.play().catch(() => {});
-        return;
-    }
-
-    // Trocar de segmento: atualizar indice e posicao do playhead imediatamente
-    currentTime.value = 0;
-    pendingSeekTime.value = 0;
-    shouldAutoPlay.value = true;
-    currentSegmentIndex.value = idx;
-    scrollCenterSec.value = ps.startSec;
-    isFollowingPlayback.value = true;
-}
-
 // ─── Video Events ────────────────────
-function onLoadedMetadata() {
-    if (!videoRef.value) return;
-    duration.value = videoRef.value.duration;
-    isVideoReady.value = true;
-    videoError.value = false;
-
-    if (pendingSeekTime.value !== null) {
-        videoRef.value.currentTime = pendingSeekTime.value;
-        pendingSeekTime.value = null;
-    }
-    if (shouldAutoPlay.value) {
-        shouldAutoPlay.value = false;
-        videoRef.value.play().catch(() => {});
-    }
-}
-
 function onTimeUpdate() {
     if (!videoRef.value || isDragging.value) return;
     currentTime.value = videoRef.value.currentTime;
 }
 
-function onProgress() {
-    if (!videoRef.value) return;
-    if (videoRef.value.buffered.length > 0) {
-        buffered.value = videoRef.value.buffered.end(videoRef.value.buffered.length - 1);
-    }
-}
-
 function onPlay() { isPlaying.value = true; }
 function onPause() { isPlaying.value = false; }
-
-function onEnded() {
-    isPlaying.value = false;
-    if (currentSegmentIndex.value < props.segments.length - 1) {
-        shouldAutoPlay.value = true;
-        currentSegmentIndex.value++;
-    }
-}
 
 function onError() {
     videoError.value = true;
     isVideoReady.value = false;
-    // Se este segmento falhou (ex.: 404 local), avancar para o proximo para nao travar o cursor
-    if (currentSegmentIndex.value < props.segments.length - 1) {
-        currentSegmentIndex.value++;
-        currentTime.value = 0;
-        pendingSeekTime.value = 0;
-        const next = parsedSegments.value[currentSegmentIndex.value];
-        if (next) scrollCenterSec.value = next.startSec;
-        isFollowingPlayback.value = true;
-        videoError.value = false;
-        if (videoRef.value) videoRef.value.load();
-    }
 }
 
-// Watch segment URL changes → reload video
-watch(activeVideoUrl, (newUrl, oldUrl) => {
-    if (videoRef.value && newUrl && newUrl !== oldUrl) {
-        videoError.value = false;
-        isVideoReady.value = false;
-        currentTime.value = 0;
-        buffered.value = 0;
-        videoRef.value.load();
+function retryPlayback() {
+    videoError.value = false;
+    initHlsPlayer();
+}
+
+// ─── Lifecycle ───────────────────────
+onMounted(() => {
+    if (parsedSegments.value.length > 0) {
+        scrollCenterSec.value = parsedSegments.value[0].startSec;
     }
+
+    nextTick(() => {
+        initHlsPlayer();
+    });
+
+    document.addEventListener('keydown', onKeyDown);
+});
+
+onBeforeUnmount(() => {
+    destroyHlsPlayer();
+    document.removeEventListener('keydown', onKeyDown);
+    document.removeEventListener('mousemove', onTimelineMouseMove);
+    document.removeEventListener('mouseup', onTimelineMouseUp);
 });
 
 // ─── Formatters ──────────────────────
@@ -620,12 +601,6 @@ function onKeyDown(e: KeyboardEvent) {
             break;
     }
 }
-
-onBeforeUnmount(() => {
-    document.removeEventListener('keydown', onKeyDown);
-    document.removeEventListener('mousemove', onTimelineMouseMove);
-    document.removeEventListener('mouseup', onTimelineMouseUp);
-});
 
 const speeds = [0.25, 0.5, 1, 1.5, 2];
 </script>
@@ -720,22 +695,16 @@ const speeds = [0.25, 0.5, 1, 1.5, 2];
                 </span>
             </div>
 
-            <!-- Video Player -->
+            <!-- HLS Video Player -->
             <div v-if="segments.length > 0" class="video-container rounded-xl overflow-hidden bg-black relative">
                 <div class="relative w-full" style="aspect-ratio: 16 / 9;">
                     <video
-                        v-if="activeVideoUrl"
                         ref="videoRef"
-                        :src="activeVideoUrl"
                         class="absolute inset-0 w-full h-full object-contain bg-black"
-                        preload="metadata"
                         playsinline
-                        @loadedmetadata="onLoadedMetadata"
                         @timeupdate="onTimeUpdate"
-                        @progress="onProgress"
                         @play="onPlay"
                         @pause="onPause"
-                        @ended="onEnded"
                         @error="onError"
                         @dblclick="toggleFullscreen"
                         @click="togglePlay"
@@ -743,24 +712,35 @@ const speeds = [0.25, 0.5, 1, 1.5, 2];
 
                     <!-- Video Error -->
                     <div
-                        v-if="videoError && activeVideoUrl"
+                        v-if="videoError"
                         class="absolute inset-0 flex items-center justify-center bg-dark-900/90"
                     >
                         <div class="flex flex-col items-center gap-3 text-center">
                             <svg class="h-10 w-10 text-danger-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z" />
                             </svg>
-                            <p class="text-body text-dark-300">Erro ao carregar o segmento</p>
-                            <button class="text-primary-400 hover:text-primary-300 text-sm underline" @click="videoRef?.load()">
+                            <p class="text-body text-dark-300">Erro ao carregar a gravacao</p>
+                            <button class="text-primary-400 hover:text-primary-300 text-sm underline" @click="retryPlayback">
                                 Tentar novamente
                             </button>
                         </div>
                     </div>
 
-                    <!-- Segment indicator overlay -->
-                    <div v-if="currentSegment" class="absolute top-3 left-3 z-10">
+                    <!-- Loading indicator -->
+                    <div
+                        v-if="!isVideoReady && !videoError && segments.length > 0"
+                        class="absolute inset-0 flex items-center justify-center bg-dark-900/80"
+                    >
+                        <div class="flex flex-col items-center gap-3">
+                            <div class="h-8 w-8 border-2 border-primary-500 border-t-transparent rounded-full animate-spin" />
+                            <p class="text-xs text-dark-400">Carregando playlist HLS...</p>
+                        </div>
+                    </div>
+
+                    <!-- HLS badge -->
+                    <div v-if="hlsLoaded" class="absolute top-3 left-3 z-10">
                         <span class="bg-dark-800/80 text-xs text-dark-300 font-mono px-2 py-1 rounded backdrop-blur-sm">
-                            Seg {{ currentSegmentIndex + 1 }}/{{ segments.length }}
+                            HLS
                         </span>
                     </div>
 
@@ -770,9 +750,8 @@ const speeds = [0.25, 0.5, 1, 1.5, 2];
                     </div>
                 </div>
 
-                <!-- ═══ Controls Bar ═══ -->
+                <!-- Controls Bar -->
                 <div class="bg-dark-900 border-t border-dark-700">
-                    <!-- Control Buttons + Current Time -->
                     <div class="flex items-center justify-between px-4 py-2">
                         <div class="flex items-center gap-2">
                             <button class="p-1 rounded hover:bg-dark-700 text-white transition-colors" title="Recortar" @click="seekRelative(-10)">
@@ -789,7 +768,6 @@ const speeds = [0.25, 0.5, 1, 1.5, 2];
                                 <ForwardIcon class="h-4 w-4" />
                             </button>
 
-                            <!-- Volume -->
                             <button class="p-1 rounded hover:bg-dark-700 text-white transition-colors ml-1" @click="toggleMute">
                                 <SpeakerXMarkIcon v-if="isMuted" class="h-4 w-4" />
                                 <SpeakerWaveIcon v-else class="h-4 w-4" />
@@ -804,7 +782,6 @@ const speeds = [0.25, 0.5, 1, 1.5, 2];
                         </div>
 
                         <div class="flex items-center gap-2">
-                            <!-- Speed controls -->
                             <div class="flex items-center gap-0.5">
                                 <button
                                     v-for="speed in speeds"
@@ -829,26 +806,19 @@ const speeds = [0.25, 0.5, 1, 1.5, 2];
                         </div>
                     </div>
 
-                    <!-- ═══ VMS Timeline (Esteira) ═══ -->
+                    <!-- VMS Timeline -->
                     <div class="px-4 pb-3">
-                        <!-- Zoom controls + follow button -->
                         <div class="flex items-center justify-between mb-1">
                             <div class="flex items-center gap-1">
                                 <button
                                     class="text-[10px] text-dark-400 hover:text-white px-1.5 py-0.5 rounded hover:bg-dark-700 transition-colors"
-                                    title="Zoom in (+)"
                                     @click="zoomIn"
-                                >
-                                    +
-                                </button>
+                                >+</button>
                                 <span class="text-[10px] text-dark-500 font-mono w-8 text-center">{{ zoomLabel }}</span>
                                 <button
                                     class="text-[10px] text-dark-400 hover:text-white px-1.5 py-0.5 rounded hover:bg-dark-700 transition-colors"
-                                    title="Zoom out (-)"
                                     @click="zoomOut"
-                                >
-                                    -
-                                </button>
+                                >-</button>
                             </div>
                             <button
                                 v-if="!isFollowingPlayback"
@@ -859,7 +829,6 @@ const speeds = [0.25, 0.5, 1, 1.5, 2];
                             </button>
                         </div>
 
-                        <!-- Timeline container -->
                         <div
                             ref="timelineContainerRef"
                             class="relative h-14 cursor-grab select-none overflow-hidden rounded-lg bg-dark-800"
@@ -868,32 +837,20 @@ const speeds = [0.25, 0.5, 1, 1.5, 2];
                             @click="onTimelineClick"
                             @wheel.prevent="onTimelineWheel"
                         >
-                            <!-- Time labels (bottom) -->
+                            <!-- Time labels -->
                             <div class="absolute bottom-0 left-0 right-0 h-4">
                                 <template v-for="marker in visibleTimeMarkers" :key="marker.sec">
-                                    <div
-                                        class="absolute bottom-0"
-                                        :style="{ left: marker.percent + '%' }"
-                                    >
-                                        <!-- Tick mark -->
-                                        <div
-                                            :class="[
-                                                'absolute bottom-full left-0 w-px',
-                                                marker.isMajor ? 'h-3 bg-dark-500' : 'h-1.5 bg-dark-600'
-                                            ]"
-                                        />
-                                        <!-- Label -->
+                                    <div class="absolute bottom-0" :style="{ left: marker.percent + '%' }">
+                                        <div :class="['absolute bottom-full left-0 w-px', marker.isMajor ? 'h-3 bg-dark-500' : 'h-1.5 bg-dark-600']" />
                                         <span
                                             v-if="marker.isMajor"
                                             class="absolute left-0 -translate-x-1/2 text-[10px] text-dark-400 font-mono whitespace-nowrap"
-                                        >
-                                            {{ marker.label }}
-                                        </span>
+                                        >{{ marker.label }}</span>
                                     </div>
                                 </template>
                             </div>
 
-                            <!-- Segment bars: cada barra = 1 segmento clicavel (nuvem = roxo, local = violeta) -->
+                            <!-- Segment bars -->
                             <div class="absolute top-1 left-0 right-0 bottom-5">
                                 <div
                                     v-for="bar in visibleSegmentBars"
@@ -905,16 +862,14 @@ const speeds = [0.25, 0.5, 1, 1.5, 2];
                                             : (bar.active ? 'bg-violet-600/80' : 'bg-violet-700/50')
                                     ]"
                                     :style="{ left: bar.left + '%', width: Math.max(bar.width, 0.2) + '%' }"
-                                    @click.stop="jumpToSegment(bar.index)"
                                 />
                             </div>
 
-                            <!-- Center playhead (fixed red line) -->
+                            <!-- Center playhead -->
                             <div
                                 class="absolute top-0 bottom-0 w-0.5 bg-white z-20 pointer-events-none"
                                 :style="{ left: playheadPercent + '%' }"
                             >
-                                <!-- Triangle marker top -->
                                 <div class="absolute -top-0.5 left-1/2 -translate-x-1/2 w-0 h-0 border-l-[5px] border-r-[5px] border-t-[6px] border-l-transparent border-r-transparent border-t-white" />
                             </div>
                         </div>
@@ -922,7 +877,7 @@ const speeds = [0.25, 0.5, 1, 1.5, 2];
                 </div>
             </div>
 
-            <!-- Empty state: no segments for this day -->
+            <!-- Empty state -->
             <ZyCard v-else padding="lg">
                 <div class="text-center py-12">
                     <FilmIcon class="h-12 w-12 text-dark-600 mx-auto mb-4" />
@@ -961,9 +916,8 @@ const speeds = [0.25, 0.5, 1, 1.5, 2];
             </div>
         </div>
 
-        <!-- Sidebar: Segment List + Calendar -->
+        <!-- Sidebar: Dates + Info -->
         <div class="space-y-4">
-            <!-- Available dates -->
             <ZyCard>
                 <template #header>
                     <div class="flex items-center gap-2">
@@ -997,7 +951,7 @@ const speeds = [0.25, 0.5, 1, 1.5, 2];
                 </div>
             </ZyCard>
 
-            <!-- Segments list for the day -->
+            <!-- Segments info (compact) -->
             <ZyCard>
                 <template #header>
                     <div class="flex items-center gap-2">
@@ -1028,15 +982,6 @@ const speeds = [0.25, 0.5, 1, 1.5, 2];
                         <div class="flex items-center gap-2">
                             <span class="text-[10px] text-dark-500">{{ seg.duration_seconds }}s</span>
                             <span class="text-xs text-dark-400">{{ formatFileSize(seg.file_size_bytes) }}</span>
-                            <a
-                                :href="seg.stream_url"
-                                target="_blank"
-                                class="opacity-0 group-hover:opacity-100 transition-opacity"
-                                @click.stop
-                                title="Download"
-                            >
-                                <ArrowDownTrayIcon class="h-3.5 w-3.5 text-dark-500 hover:text-white" />
-                            </a>
                         </div>
                     </div>
                 </div>

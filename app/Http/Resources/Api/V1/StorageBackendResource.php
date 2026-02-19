@@ -27,8 +27,8 @@ class StorageBackendResource extends JsonResource
                 ? round(($this->used_capacity_gb / $this->total_capacity_gb) * 100, 1)
                 : 0,
             'total_files' => $this->total_files,
-            'created_at' => $this->created_at->toISOString(),
-            'updated_at' => $this->updated_at->toISOString(),
+            'created_at' => $this->created_at?->toISOString(),
+            'updated_at' => $this->updated_at?->toISOString(),
             // Config is intentionally excluded (encrypted credentials)
         ];
     }

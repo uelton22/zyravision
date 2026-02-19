@@ -81,8 +81,9 @@ Route::middleware('auth')->group(function () {
         Route::post('/recordings/{recording}/clip', [RecordingController::class, 'clip'])->name('recordings.clip');
 
         // Storage dashboard (view usage)
-        Route::get('/storage', [StorageController::class, 'index'])->name('storage.index');
-        Route::put('/storage/retention', [StorageController::class, 'updateRetention'])->name('storage.retention.update');
+        // Route path uses /armazenamento to avoid conflict with Laravel's public/storage symlink
+        Route::get('/armazenamento', [StorageController::class, 'index'])->name('storage.index');
+        Route::put('/armazenamento/retention', [StorageController::class, 'updateRetention'])->name('storage.retention.update');
 
         // Users CRUD
         Route::resource('users', UserController::class);
@@ -149,11 +150,11 @@ Route::middleware('auth')->group(function () {
         Route::get('/recordings/{recording}/playback', [RecordingController::class, 'playback'])->name('recordings.playback');
         Route::get('/recordings/{recording}/stream', [RecordingController::class, 'stream'])->name('recordings.stream');
 
-        // Segment streaming/timeline (needed for playback)
+        // Segment timeline (needed for web playback UI)
         Route::get('/api/cameras/{camera}/timeline', [\App\Http\Controllers\SegmentController::class, 'timeline'])->name('api.cameras.timeline');
         Route::get('/api/cameras/{camera}/timeline/dates', [\App\Http\Controllers\SegmentController::class, 'availableDates'])->name('api.cameras.timeline.dates');
         Route::get('/api/cameras/{camera}/playback', [\App\Http\Controllers\SegmentController::class, 'playbackAtTime'])->name('api.cameras.playback');
-        Route::get('/api/segments/{segment}/stream', [\App\Http\Controllers\SegmentController::class, 'stream'])->name('segments.stream');
+        Route::get('/api/cameras/{camera}/playback.m3u8', [\App\Http\Controllers\SegmentController::class, 'hlsPlaylist'])->name('cameras.hls-playlist');
     });
 
     // ═══════════════════════════════════════════════════════
@@ -190,4 +191,9 @@ Route::middleware('auth')->group(function () {
             Route::post('/{backend}/set-default', [StorageBackendController::class, 'setDefault'])->name('set-default');
         });
     });
+});
+
+// Segment streaming (web route): supports session auth for web UI
+Route::middleware([\App\Http\Middleware\TokenFromQueryString::class, 'auth:sanctum'])->group(function () {
+    Route::get('/api/segments/{segment}/stream', [\App\Http\Controllers\SegmentController::class, 'stream'])->name('segments.stream');
 });

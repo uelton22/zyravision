@@ -399,19 +399,31 @@ class TranscoderWorkerCommand extends Command
             }
         }
 
+        // Force keyframes at segment boundaries when re-encoding
+        if ($codec !== 'copy') {
+            $cmd[] = '-force_key_frames';
+            $cmd[] = "expr:gte(t,n_forced*{$segmentDuration})";
+        }
+
         // Audio: disable for now
         $cmd[] = '-an';
 
-        // Segment output
+        // Segment output (MPEG-TS for seamless HLS playback)
         $cmd = array_merge($cmd, [
             '-f', 'segment',
             '-segment_time', (string) $segmentDuration,
-            '-segment_format', 'mp4',
+            '-segment_format', 'mpegts',
             '-reset_timestamps', '1',
             '-strftime', '1',
-            '-movflags', '+faststart',
-            $outputPath . '/' . $filenamePattern,
         ]);
+
+        // For copy codec, allow slight tolerance for keyframe alignment
+        if ($codec === 'copy') {
+            $cmd[] = '-segment_time_delta';
+            $cmd[] = '0.5';
+        }
+
+        $cmd[] = $outputPath . '/' . $filenamePattern;
 
         return $cmd;
     }
@@ -492,11 +504,10 @@ class TranscoderWorkerCommand extends Command
     /**
      * Process lightweight FFmpeg tasks: thumbnail generation, snapshot capture.
      * These are short-lived operations (1-3s) unlike continuous transcoding.
-     * Max 5 tasks per poll cycle to avoid blocking the main loop.
      */
     private function processFfmpegTasks(): void
     {
-        $maxPerCycle = 5;
+        $maxPerCycle = 50;
         $processed = 0;
 
         while ($processed < $maxPerCycle) {
@@ -582,15 +593,15 @@ class TranscoderWorkerCommand extends Command
         if ($exitCode === 0 && File::exists($thumbnailPath)) {
             $publicPath = "/storage/thumbnails/{$segment->camera_id}/{$thumbnailFilename}";
             $segment->update(['thumbnail_path' => $publicPath]);
-
-            if ($this->output->isVerbose()) {
-                $this->line("  [thumb] Segmento {$segmentId} -> {$publicPath}");
-            }
+            $this->line("  [thumb] Segmento {$segmentId} -> {$publicPath}");
         } else {
+            $errorOutput = implode("\n", array_slice($output, -5));
             Log::warning("Thumbnail falhou para segmento {$segmentId}.", [
                 'exit_code' => $exitCode,
-                'output' => implode("\n", array_slice($output, -5)),
+                'output' => $errorOutput,
+                'video_path' => $videoPath,
             ]);
+            $this->error("  [thumb] FALHOU segmento {$segmentId} (exit={$exitCode}): {$errorOutput}");
         }
     }
 

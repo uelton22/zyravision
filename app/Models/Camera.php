@@ -174,11 +174,13 @@ class Camera extends Model
     }
 
     /**
-     * Whether this camera needs FFmpeg transcoding (quality != original).
+     * Whether this camera uses FFmpeg for recording.
+     * Always true: MPEG-TS segments via FFmpeg are required for HLS playback,
+     * even with 'original' quality (copy codec, no re-encoding).
      */
     public function needsTranscoding(): bool
     {
-        return $this->getEffectiveRecordingQuality() !== 'original';
+        return true;
     }
 
     /**
@@ -190,9 +192,9 @@ class Camera extends Model
 
         if ($quality === 'original') {
             return [
-                'resolution' => $this->resolution,
-                'codec' => $this->codec ?? 'h264',
-                'fps' => $this->fps,
+                'resolution' => null,
+                'codec' => 'copy',
+                'fps' => null,
                 'bitrate' => null,
             ];
         }

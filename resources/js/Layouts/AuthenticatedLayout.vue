@@ -68,7 +68,7 @@ const navigation = computed(() => {
     // Armazenamento: admin + super-admin
     if (isAdminOrSuper.value) {
         items.push(
-            { label: 'Armazenamento', href: '/storage', icon: CircleStackIcon },
+            { label: 'Armazenamento', href: '/armazenamento', icon: CircleStackIcon },
         );
     }
 

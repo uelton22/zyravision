@@ -19,8 +19,8 @@ class StreamResource extends JsonResource
             'stopped_at' => $this->stopped_at?->toISOString(),
             'last_health_check' => $this->last_health_check?->toISOString(),
             'error_message' => $this->error_message,
-            'created_at' => $this->created_at->toISOString(),
-            'updated_at' => $this->updated_at->toISOString(),
+            'created_at' => $this->created_at?->toISOString(),
+            'updated_at' => $this->updated_at?->toISOString(),
 
             // Player URLs (only when stream is active)
             'urls' => $this->when($this->status === 'active', [

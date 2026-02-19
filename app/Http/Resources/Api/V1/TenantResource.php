@@ -19,8 +19,8 @@ class TenantResource extends JsonResource
             'max_cameras' => $this->max_cameras,
             'max_users' => $this->max_users,
             'storage_retention_days' => $this->storage_retention_days,
-            'created_at' => $this->created_at->toISOString(),
-            'updated_at' => $this->updated_at->toISOString(),
+            'created_at' => $this->created_at?->toISOString(),
+            'updated_at' => $this->updated_at?->toISOString(),
 
             'active_subscription' => $this->whenLoaded('activeSubscription'),
             'plan' => $this->whenLoaded('activeSubscription', function () {

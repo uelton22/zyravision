@@ -126,16 +126,40 @@ class SegmentController extends Controller
         // Build timeline ranges (contiguous segments grouped)
         $ranges = $this->buildTimelineRanges($segments->toArray());
 
+        // Calculate cumulative playlist offset for each segment (for HLS seek mapping)
+        $cumulativeOffset = 0;
+        $gapThreshold = 120;
+        $segmentsWithOffset = $segments->values()->map(function ($seg, $index) use ($segments, &$cumulativeOffset, $gapThreshold) {
+            if ($index > 0) {
+                $prevSeg = $segments->values()[$index - 1];
+                $prevEnd = $prevSeg['ends_at'] ?? Carbon::parse($prevSeg['starts_at'])->addSeconds($prevSeg['duration_seconds'])->toIso8601String();
+                $gap = Carbon::parse($prevEnd)->diffInSeconds(Carbon::parse($seg['starts_at']), false);
+
+                if ($gap <= $gapThreshold) {
+                    $cumulativeOffset += $prevSeg['duration_seconds'] ?: 60;
+                } else {
+                    $cumulativeOffset += $prevSeg['duration_seconds'] ?: 60;
+                }
+            }
+
+            $seg['playlist_offset_seconds'] = $cumulativeOffset;
+            return $seg;
+        });
+
         return response()->json([
             'camera_id' => $camera->id,
             'range' => [
                 'start' => $start->toIso8601String(),
                 'end' => $end->toIso8601String(),
             ],
-            'segments' => $segments,
+            'segments' => $segmentsWithOffset,
             'ranges' => $ranges,
             'total_segments' => $segments->count(),
             'total_duration_seconds' => $segments->sum('duration_seconds'),
+            'hls_playlist_url' => route('cameras.hls-playlist', [
+                'camera' => $camera->id,
+                'date' => Carbon::parse($start)->format('Y-m-d'),
+            ]),
         ]);
     }
 
@@ -168,7 +192,8 @@ class SegmentController extends Controller
     /**
      * GET /api/segments/{segment}/stream
      *
-     * Stream a specific segment MP4 file (with range support for seeking).
+     * Stream a specific segment file (with range support for seeking).
+     * Supports both .ts (MPEG-TS) and legacy .mp4 segments.
      */
     public function stream(Request $request, RecordingSegment $segment): BinaryFileResponse|StreamedResponse
     {
@@ -180,10 +205,118 @@ class SegmentController extends Controller
             abort(404, 'Segmento nao encontrado.');
         }
 
+        $contentType = str_ends_with(strtolower($localFile), '.ts')
+            ? 'video/MP2T'
+            : 'video/mp4';
+
         return response()->file($localFile, [
-            'Content-Type' => 'video/mp4',
+            'Content-Type' => $contentType,
             'Accept-Ranges' => 'bytes',
             'Cache-Control' => 'public, max-age=86400',
+        ]);
+    }
+
+    /**
+     * GET /api/v1/cameras/{camera}/playback.m3u8?date=2026-02-17
+     *
+     * Generate a dynamic HLS (M3U8) playlist for a camera on a specific date.
+     * This enables continuous playback across all segments without flickering.
+     * Uses #EXT-X-PROGRAM-DATE-TIME for real-world time mapping.
+     * Uses #EXT-X-DISCONTINUITY to handle gaps in recording.
+     */
+    public function hlsPlaylist(Request $request, Camera $camera): \Illuminate\Http\Response
+    {
+        $this->authorizeCamera($camera);
+
+        $request->validate([
+            'date' => 'nullable|date_format:Y-m-d',
+            'start' => 'nullable|date',
+            'end' => 'nullable|date',
+            'start_from' => 'nullable|integer|min:0',
+        ]);
+
+        if ($request->has('date')) {
+            $date = Carbon::parse($request->input('date'));
+            $start = $date->copy()->startOfDay();
+            $end = $date->copy()->endOfDay();
+        } else {
+            $start = $request->input('start')
+                ? Carbon::parse($request->input('start'))
+                : now()->startOfDay();
+            $end = $request->input('end')
+                ? Carbon::parse($request->input('end'))
+                : now()->endOfDay();
+        }
+
+        $segments = RecordingSegment::forCamera($camera->id)
+            ->available()
+            ->inTimeRange($start, $end)
+            ->orderBy('starts_at')
+            ->get();
+
+        // start_from: cumulative playlist offset in seconds — skip segments before it
+        $startFrom = (int) $request->input('start_from', 0);
+        if ($startFrom > 0) {
+            $cumulative = 0;
+            $segments = $segments->filter(function ($seg) use (&$cumulative, $startFrom) {
+                $dur = $seg->duration_seconds ?: 60;
+                $segEnd = $cumulative + $dur;
+                if ($segEnd <= $startFrom) {
+                    $cumulative += $dur;
+                    return false;
+                }
+                $cumulative += $dur;
+                return true;
+            })->values();
+        }
+
+        $gapThreshold = 120;
+
+        $maxDuration = 0;
+        foreach ($segments as $seg) {
+            $dur = $seg->duration_seconds ?: 60;
+            if ($dur > $maxDuration) {
+                $maxDuration = $dur;
+            }
+        }
+        $targetDuration = max(1, (int) ceil($maxDuration));
+
+        $token = $request->bearerToken();
+        $tokenQuery = $token ? '?token=' . urlencode($token) : '';
+
+        $m3u8 = "#EXTM3U\n";
+        $m3u8 .= "#EXT-X-VERSION:3\n";
+        $m3u8 .= "#EXT-X-TARGETDURATION:{$targetDuration}\n";
+        $m3u8 .= "#EXT-X-PLAYLIST-TYPE:VOD\n";
+        $m3u8 .= "#EXT-X-MEDIA-SEQUENCE:0\n";
+
+        $prevEnd = null;
+
+        foreach ($segments as $segment) {
+            $segStart = $segment->starts_at;
+            $duration = $segment->duration_seconds ?: 60;
+
+            if ($prevEnd !== null) {
+                $gap = $prevEnd->diffInSeconds($segStart, false);
+                if ($gap > $gapThreshold) {
+                    $m3u8 .= "#EXT-X-DISCONTINUITY\n";
+                }
+            }
+
+            $programDateTime = $segStart->copy()->setTimezone('UTC')->format('Y-m-d\TH:i:s.v\Z');
+            $m3u8 .= "#EXT-X-PROGRAM-DATE-TIME:{$programDateTime}\n";
+            $m3u8 .= "#EXTINF:" . number_format($duration, 3, '.', '') . ",\n";
+            $m3u8 .= url("/api/v1/segments/{$segment->id}/stream") . $tokenQuery . "\n";
+
+            $prevEnd = $segment->ends_at ?? $segStart->copy()->addSeconds($duration);
+        }
+
+        $m3u8 .= "#EXT-X-ENDLIST\n";
+
+        return response($m3u8, 200, [
+            'Content-Type' => 'application/vnd.apple.mpegurl',
+            'Cache-Control' => 'no-cache',
+            'Access-Control-Allow-Origin' => '*',
         ]);
     }
 
@@ -204,11 +337,13 @@ class SegmentController extends Controller
 
         $camera = $segment->camera;
         $date = $segment->starts_at->format('Y-m-d_H-i-s');
-        $filename = "gravacao_{$camera->name}_{$date}.mp4";
+        $ext = str_ends_with(strtolower($localFile), '.ts') ? 'ts' : 'mp4';
+        $contentType = $ext === 'ts' ? 'video/MP2T' : 'video/mp4';
+        $filename = "gravacao_{$camera->name}_{$date}.{$ext}";
         $filename = preg_replace('/[^a-zA-Z0-9_\-\.]/', '_', $filename);
 
         return response()->download($localFile, $filename, [
-            'Content-Type' => 'video/mp4',
+            'Content-Type' => $contentType,
         ]);
     }
 
@@ -264,7 +399,7 @@ class SegmentController extends Controller
                 'starts_at' => $segment->starts_at->toIso8601String(),
                 'ends_at' => $segment->ends_at?->toIso8601String(),
                 'duration_seconds' => $segment->duration_seconds,
-                'stream_url' => route('segments.stream', $segment),
+                'stream_url' => url("/api/v1/segments/{$segment->id}/stream"),
             ],
             'offset_seconds' => $offset,
         ]);

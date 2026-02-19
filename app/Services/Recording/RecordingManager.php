@@ -225,18 +225,18 @@ class RecordingManager
         $files = File::files($storagePath);
 
         foreach ($files as $file) {
-            if (! str_ends_with(strtolower($file->getFilename()), '.mp4')) {
+            $fn = strtolower($file->getFilename());
+            if (! str_ends_with($fn, '.ts') && ! str_ends_with($fn, '.mp4')) {
                 continue;
             }
 
-            // Match files by modification time within this recording's window
             if ($recording->started_at) {
                 $fileMtime = $file->getMTime();
                 $windowStart = $recording->started_at->timestamp - 60;
-                $windowEnd = time() + 120; // Still recording
+                $windowEnd = time() + 120;
 
                 if ($fileMtime < $windowStart) {
-                    continue; // File belongs to an older recording
+                    continue;
                 }
             }
 
@@ -302,7 +302,8 @@ class RecordingManager
 
         $matched = [];
         foreach ($files as $file) {
-            if (! str_ends_with(strtolower($file->getFilename()), '.mp4')) {
+            $fn = strtolower($file->getFilename());
+            if (! str_ends_with($fn, '.ts') && ! str_ends_with($fn, '.mp4')) {
                 continue;
             }
 

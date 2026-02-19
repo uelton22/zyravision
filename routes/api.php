@@ -14,6 +14,12 @@ use Illuminate\Support\Facades\Route;
 */
 
 Route::prefix('v1')->name('api.v1.')->group(function () {
+    // ─── Segment streaming (accepts ?token= for HLS player auth) ─────
+    // TokenFromQueryString is prepended to the api middleware group in bootstrap/app.php
+    // so it runs BEFORE EnsureFrontendRequestsAreStateful, converting ?token= to Bearer.
+    Route::middleware('auth:sanctum')
+        ->get('/segments/{segment}/stream', [\App\Http\Controllers\SegmentController::class, 'stream']);
+
     // ─── Public ───────────────────────────────────────────
     Route::post('/auth/login', [\App\Http\Controllers\Api\V1\AuthController::class, 'login']);
     Route::post('/auth/register', [\App\Http\Controllers\Api\V1\AuthController::class, 'register']);
@@ -65,7 +71,7 @@ Route::prefix('v1')->name('api.v1.')->group(function () {
         Route::get('/cameras/{camera}/timeline', [\App\Http\Controllers\SegmentController::class, 'timeline']);
         Route::get('/cameras/{camera}/timeline/dates', [\App\Http\Controllers\SegmentController::class, 'availableDates']);
         Route::get('/cameras/{camera}/playback', [\App\Http\Controllers\SegmentController::class, 'playbackAtTime']);
-        Route::get('/segments/{segment}/stream', [\App\Http\Controllers\SegmentController::class, 'stream']);
+        Route::get('/cameras/{camera}/playback.m3u8', [\App\Http\Controllers\SegmentController::class, 'hlsPlaylist'])->name('api.cameras.hls-playlist');
         Route::get('/segments/{segment}/download', [\App\Http\Controllers\SegmentController::class, 'download']);
 
         // Storage

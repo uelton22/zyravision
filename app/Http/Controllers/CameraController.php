@@ -276,14 +276,18 @@ class CameraController extends Controller
         $startOfDay = Carbon::parse($date)->startOfDay();
         $endOfDay = Carbon::parse($date)->endOfDay();
 
-        // Fetch segments for the selected day (cada segmento = uma barra clicavel na timeline)
+        // Fetch segments for the selected day
+        $cumulativeOffset = 0;
         $segments = RecordingSegment::forCamera($camera->id)
             ->available()
             ->inTimeRange($startOfDay, $endOfDay)
             ->orderBy('starts_at')
             ->get()
-            ->map(function (RecordingSegment $s) {
+            ->map(function (RecordingSegment $s) use (&$cumulativeOffset) {
                 $streamUrl = route('segments.stream', $s);
+                $offset = $cumulativeOffset;
+                $cumulativeOffset += ($s->duration_seconds ?: 60);
+
                 return [
                     'id' => $s->id,
                     'starts_at' => $s->starts_at->toIso8601String(),
@@ -294,8 +298,15 @@ class CameraController extends Controller
                     'stream_url' => $streamUrl,
                     'has_local' => (bool) $s->local_path,
                     'has_remote' => (bool) $s->remote_path,
+                    'playlist_offset_seconds' => $offset,
                 ];
             });
+
+        // HLS playlist URL for continuous playback
+        $hlsPlaylistUrl = route('cameras.hls-playlist', [
+            'camera' => $camera->id,
+            'date' => $date,
+        ]);
 
         // Available dates for the calendar picker
         $availableDates = RecordingSegment::forCamera($camera->id)
@@ -320,6 +331,7 @@ class CameraController extends Controller
             'segments' => $segments,
             'selectedDate' => $date,
             'availableDates' => $availableDates,
+            'hlsPlaylistUrl' => $hlsPlaylistUrl,
             'stats' => [
                 'total_segments' => $totalSegments,
                 'total_size' => (int) $totalSize,

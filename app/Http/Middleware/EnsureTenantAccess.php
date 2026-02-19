@@ -19,13 +19,13 @@ class EnsureTenantAccess
             abort(401, 'Autenticação necessária.');
         }
 
-        if (! $user->tenant_id) {
-            abort(403, 'Usuário não pertence a nenhum tenant.');
-        }
-
-        // Super admins can access any tenant
+        // Super admins can access any tenant (even without tenant_id)
         if ($user->hasRole('super-admin')) {
             return $next($request);
+        }
+
+        if (! $user->tenant_id) {
+            abort(403, 'Usuário não pertence a nenhum tenant.');
         }
 
         // Check if the user's tenant matches the request context

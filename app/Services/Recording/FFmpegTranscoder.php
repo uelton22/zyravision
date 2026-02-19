@@ -13,7 +13,7 @@ use Illuminate\Support\Facades\Log;
  * transcoded segments to the same recording directory that MediaMTX would use.
  *
  * Architecture:
- *   Camera → RTSP → MediaMTX → RTSP relay → FFmpeg → /recordings/{path}/*.mp4
+ *   Camera → RTSP → MediaMTX → RTSP relay → FFmpeg → /recordings/{path}/*.ts
  *
  * When quality = 'original', MediaMTX records natively (no FFmpeg needed).
  * When quality != 'original', FFmpeg transcodes and writes segments.
@@ -159,14 +159,13 @@ class FFmpegTranscoder
         $audioParams = $this->buildAudioParams($camera);
         $cmd = array_merge($cmd, $audioParams);
 
-        // Segment output
+        // Segment output (MPEG-TS for seamless HLS playback)
         $cmd = array_merge($cmd, [
             '-f', 'segment',
             '-segment_time', (string) $segmentDuration,
-            '-segment_format', 'mp4',
+            '-segment_format', 'mpegts',
             '-reset_timestamps', '1',
             '-strftime', '1',
-            '-movflags', '+faststart',
             $outputPath . '/' . $filenamePattern,
         ]);
 

@@ -138,13 +138,16 @@ class RecordingSegment extends Model
         );
 
         // Safety cap: a single segment should never exceed 10 minutes.
-        // If it does, the duration was likely miscalculated (e.g., using now() after a long pause).
         $maxDuration = 600;
         if ($resolvedDuration > $maxDuration) {
             $resolvedDuration = $maxDuration;
-            $resolvedEndsAt = $this->starts_at
-                ? $this->starts_at->copy()->addSeconds($maxDuration)
-                : $resolvedEndsAt;
+        }
+
+        // Always derive ends_at from starts_at + duration to guarantee consistency.
+        // This prevents orphan time ranges when ends_at was set from now() or a
+        // distant next-file timestamp after a recording gap.
+        if ($this->starts_at) {
+            $resolvedEndsAt = $this->starts_at->copy()->addSeconds($resolvedDuration);
         }
 
         $this->update([

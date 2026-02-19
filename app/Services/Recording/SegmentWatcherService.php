@@ -88,17 +88,18 @@ class SegmentWatcherService
     public function scanCameraDirectory(Camera $camera, string $directory): array
     {
         $files = File::files($directory);
-        $mp4Files = collect($files)
-            ->filter(fn ($f) => str_ends_with(strtolower($f->getFilename()), '.mp4'))
+        $videoFiles = collect($files)
+            ->filter(fn ($f) => str_ends_with(strtolower($f->getFilename()), '.ts')
+                || str_ends_with(strtolower($f->getFilename()), '.mp4'))
             ->sortBy(fn ($f) => $f->getMTime());
 
-        if ($mp4Files->isEmpty()) {
+        if ($videoFiles->isEmpty()) {
             return ['new_segments' => 0, 'uploaded' => 0];
         }
 
         $newSegments = 0;
         $uploaded = 0;
-        $filesArray = $mp4Files->values()->all();
+        $filesArray = $videoFiles->values()->all();
         $fileCount = count($filesArray);
 
         foreach ($filesArray as $index => $file) {
@@ -112,16 +113,22 @@ class SegmentWatcherService
             if ($existing) {
                 // If already indexed as 'writing' and there's a newer file, mark as ready
                 if ($existing->status === RecordingSegment::STATUS_WRITING && $index < $fileCount - 1) {
-                    // Calculate real duration from the NEXT segment's start timestamp
-                    // instead of using now(), which would include idle time after recording stopped
                     $realDuration = null;
                     $realEndsAt = null;
                     $nextFile = $filesArray[$index + 1] ?? null;
                     if ($nextFile && $existing->starts_at) {
                         $nextStartsAt = $this->parseTimestampFromFilename($nextFile->getFilename());
                         if ($nextStartsAt) {
-                            $realDuration = (int) $existing->starts_at->diffInSeconds($nextStartsAt);
-                            $realEndsAt = $nextStartsAt;
+                            $gap = (int) $existing->starts_at->diffInSeconds($nextStartsAt);
+                            $segDuration = $this->getSegmentDuration($camera);
+                            // Only use next file's start as ends_at if the gap is reasonable
+                            // (within 2x segment duration). Otherwise use probe or default.
+                            if ($gap <= $segDuration * 2) {
+                                $realDuration = $gap;
+                                $realEndsAt = $nextStartsAt;
+                            } else {
+                                $realDuration = $this->probeVideoDuration($file->getPathname()) ?? $segDuration;
+                            }
                         }
                     }
                     $existing->markReady($file->getSize(), $realDuration, $realEndsAt);
@@ -175,6 +182,9 @@ class SegmentWatcherService
                 }
 
                 $newSegments++;
+
+                // Dispatch thumbnail generation for this newly ready segment
+                \App\Jobs\GenerateSegmentThumbnailJob::dispatch($segment->id);
 
                 // Upload to storage backend
                 if ($this->uploadSegment($segment, $file->getPathname())) {
@@ -348,12 +358,12 @@ class SegmentWatcherService
     }
 
     /**
-     * Parse timestamp from MediaMTX filename format: YYYY-MM-DD_HH-MM-SS-ffffff.mp4
-     * MediaMTX uses UTC timestamps in filenames.
+     * Parse timestamp from filename format: YYYY-MM-DD_HH-MM-SS-ffffff.ts (or .mp4 legacy)
+     * FFmpeg/MediaMTX uses UTC timestamps in filenames.
      */
     private function parseTimestampFromFilename(string $filename): ?Carbon
     {
-        // Format: 2026-02-10_13-27-37-371731.mp4
+        // Format: 2026-02-10_13-27-37-371731.ts (or .mp4)
         if (preg_match('/^(\d{4}-\d{2}-\d{2})_(\d{2})-(\d{2})-(\d{2})/', $filename, $m)) {
             $dateStr = "{$m[1]} {$m[2]}:{$m[3]}:{$m[4]}";
 
@@ -377,6 +387,26 @@ class SegmentWatcherService
         $settings = RecordingSetting::forTenant($camera->tenant_id);
 
         return $settings->segment_duration_seconds;
+    }
+
+    /**
+     * Probe actual video duration using ffprobe (available in transcoder volume).
+     * Returns null on failure so callers can fall back to default.
+     */
+    private function probeVideoDuration(string $filePath): ?int
+    {
+        if (! file_exists($filePath)) {
+            return null;
+        }
+
+        $cmd = "ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 " . escapeshellarg($filePath) . " 2>/dev/null";
+        $output = trim((string) shell_exec($cmd));
+
+        if ($output && is_numeric($output)) {
+            return (int) round((float) $output);
+        }
+
+        return null;
     }
 
     /**

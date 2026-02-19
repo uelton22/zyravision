@@ -31,8 +31,8 @@ class DeviceResource extends JsonResource
             'last_seen_at' => $this->last_seen_at?->toISOString(),
             'location' => $this->location,
             'serial_number' => $this->serial_number,
-            'created_at' => $this->created_at->toISOString(),
-            'updated_at' => $this->updated_at->toISOString(),
+            'created_at' => $this->created_at?->toISOString(),
+            'updated_at' => $this->updated_at?->toISOString(),
 
             'cameras' => CameraResource::collection($this->whenLoaded('cameras')),
             'cameras_count' => $this->when($this->cameras_count !== null, $this->cameras_count),

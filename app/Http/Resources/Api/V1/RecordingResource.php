@@ -25,8 +25,8 @@ class RecordingResource extends JsonResource
             'codec' => $this->codec,
             'resolution' => $this->resolution,
             'fps' => $this->fps,
-            'created_at' => $this->created_at->toISOString(),
-            'updated_at' => $this->updated_at->toISOString(),
+            'created_at' => $this->created_at?->toISOString(),
+            'updated_at' => $this->updated_at?->toISOString(),
 
             'camera' => $this->whenLoaded('camera', fn () => new CameraResource($this->camera)),
             'stream' => $this->whenLoaded('stream', fn () => new StreamResource($this->stream)),

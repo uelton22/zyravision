@@ -18,8 +18,8 @@ class ProfileResource extends JsonResource
             'is_active' => $this->is_active,
             'email_verified_at' => $this->email_verified_at?->toISOString(),
             'last_login_at' => $this->last_login_at?->toISOString(),
-            'created_at' => $this->created_at->toISOString(),
-            'updated_at' => $this->updated_at->toISOString(),
+            'created_at' => $this->created_at?->toISOString(),
+            'updated_at' => $this->updated_at?->toISOString(),
 
             'tenant' => $this->whenLoaded('tenant', fn () => new TenantResource($this->tenant)),
             'roles' => $this->roles->pluck('name'),

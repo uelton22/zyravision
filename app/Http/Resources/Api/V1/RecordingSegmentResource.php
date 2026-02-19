@@ -23,7 +23,7 @@ class RecordingSegmentResource extends JsonResource
             'resolution' => $this->resolution,
             'fps' => $this->fps,
             'thumbnail_path' => $this->thumbnail_path,
-            'created_at' => $this->created_at->toISOString(),
+            'created_at' => $this->created_at?->toISOString(),
 
             'camera' => $this->whenLoaded('camera', fn () => new CameraResource($this->camera)),
         ];
