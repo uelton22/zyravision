@@ -54,8 +54,23 @@ class TimelineNotifier extends AutoDisposeFamilyNotifier<TimelineState, String> 
 
       debugPrint(
         '[TimelineNotifier] Loaded ${data.totalSegments} segments, '
-        '${data.ranges.length} ranges for camera $arg',
+        '${data.ranges.length} ranges, '
+        '${data.totalDurationSeconds}s total for camera $arg',
       );
+      for (int i = 0; i < data.segments.length; i++) {
+        final s = data.segments[i];
+        debugPrint(
+          '[TimelineNotifier]   seg[$i] id=${s.id.substring(0, 8)}.. '
+          'start=${s.startsAt} end=${s.endsAt} dur=${s.durationSeconds}s',
+        );
+      }
+      for (int i = 0; i < data.ranges.length; i++) {
+        final r = data.ranges[i];
+        debugPrint(
+          '[TimelineNotifier]   range[$i] ${r.start} -> ${r.end} '
+          '(${r.duration.inMinutes}min)',
+        );
+      }
     } catch (e) {
       debugPrint('[TimelineNotifier] Error loading timeline: $e');
       state = state.copyWith(

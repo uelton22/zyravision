@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/config/constants.dart';
@@ -27,9 +28,14 @@ class RecordingRemoteDataSource {
       ApiPaths.cameraTimeline(cameraId),
       queryParameters: queryParams,
     );
-    return TimelineResponseModel.fromJson(
-      response.data as Map<String, dynamic>,
+    final json = response.data as Map<String, dynamic>;
+    debugPrint(
+      '[RecordingDataSource] timeline response: '
+      'total_segments=${json['total_segments']}, '
+      'segments=${(json['segments'] as List?)?.length}, '
+      'ranges=${(json['ranges'] as List?)?.length}',
     );
+    return TimelineResponseModel.fromJson(json);
   }
 
   Future<AvailableDatesResponseModel> getAvailableDates(

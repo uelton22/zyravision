@@ -15,6 +15,7 @@ import '../../../core/theme/zy_spacing.dart';
 import '../../../core/utils/url_helper.dart';
 import '../../../state/camera/camera_providers.dart';
 import '../../../state/recording/recording_providers.dart';
+import '../../../domain/entities/timeline_data.dart';
 import '../../../state/recording/timeline_state.dart';
 import '../../widgets/feedback/zy_badge.dart';
 
@@ -36,6 +37,7 @@ class _LiveViewScreenState extends ConsumerState<LiveViewScreen> {
   late final Player _player;
   late final VideoController _videoController;
   Timer? _positionTimer;
+  Timer? _seekDebounce;
 
   bool _isFullscreen = false;
   bool _controlsVisible = true;
@@ -51,6 +53,9 @@ class _LiveViewScreenState extends ConsumerState<LiveViewScreen> {
   bool _isLiveMode = true;
   String? _currentSegmentId;
   bool _isLoadingSegment = false;
+  String? _currentHlsDate;
+  int _currentHlsStartFrom = 0;
+  bool _userSeekingTimeline = false; // Blocks _updateTimelinePosition during user scroll + playlist reload
 
   @override
   void initState() {
@@ -70,6 +75,9 @@ class _LiveViewScreenState extends ConsumerState<LiveViewScreen> {
     _player.stream.buffering.listen((buffering) {
       if (mounted) {
         setState(() => _isBuffering = buffering);
+        if (!_isLiveMode) {
+          debugPrint('[HLS] buffering=$buffering pos=${_player.state.position.inSeconds}s dur=${_player.state.duration.inSeconds}s');
+        }
       }
     });
 
@@ -77,10 +85,26 @@ class _LiveViewScreenState extends ConsumerState<LiveViewScreen> {
       if (mounted) {
         setState(() => _isPlaying = playing);
         if (!_isLiveMode) {
+          debugPrint('[HLS] playing=$playing pos=${_player.state.position.inSeconds}s');
           ref
               .read(timelineProvider(widget.cameraId).notifier)
               .setPlaying(playing);
         }
+      }
+    });
+
+    _player.stream.position.listen((position) {
+      if (!_isLiveMode && _player.state.playing) {
+        // Log position every 5 seconds for debugging
+        if (position.inSeconds % 5 == 0) {
+          debugPrint('[HLS] position=${position.inSeconds}s duration=${_player.state.duration.inSeconds}s');
+        }
+      }
+    });
+
+    _player.stream.duration.listen((duration) {
+      if (!_isLiveMode) {
+        debugPrint('[HLS] duration changed: ${duration.inSeconds}s');
       }
     });
 
@@ -94,12 +118,16 @@ class _LiveViewScreenState extends ConsumerState<LiveViewScreen> {
 
     _player.stream.error.listen((error) {
       if (mounted && error.isNotEmpty) {
+        debugPrint('[HLS] ERROR: $error');
         setState(() => _errorMessage = error);
       }
     });
 
     _player.stream.completed.listen((completed) {
-      if (completed && !_isLiveMode) _playNextSegment();
+      debugPrint('[HLS] completed=$completed');
+      if (completed && !_isLiveMode) {
+        ref.read(timelineProvider(widget.cameraId).notifier).setPlaying(false);
+      }
     });
 
     _positionTimer = Timer.periodic(const Duration(seconds: 1), (_) {
@@ -126,6 +154,7 @@ class _LiveViewScreenState extends ConsumerState<LiveViewScreen> {
   @override
   void dispose() {
     _positionTimer?.cancel();
+    _seekDebounce?.cancel();
     _player.dispose();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
@@ -175,19 +204,26 @@ class _LiveViewScreenState extends ConsumerState<LiveViewScreen> {
 
   void _switchToLive() {
     if (_isLiveMode) return;
+    _userSeekingTimeline = false;
     setState(() {
       _isLiveMode = true;
       _currentSegmentId = null;
+      _currentHlsDate = null;
+      _currentHlsStartFrom = 0;
       _errorMessage = null;
     });
     ref.read(timelineProvider(widget.cameraId).notifier).setPlaying(false);
     _initLiveStream();
   }
 
-  // ─── RECORDING PLAYBACK ──────────────────────────────
+  // ─── HLS RECORDING PLAYBACK ─────────────────────────
 
-  Future<void> _playSegment(String segmentId,
-      {int offsetSeconds = 0}) async {
+  /// Opens a trimmed HLS playlist starting from the desired position.
+  /// Instead of seeking within a loaded playlist (which MPV cannot do
+  /// reliably for HLS), we request a new M3U8 that starts from the
+  /// target segment. The player always starts at position 0.
+  Future<void> _playHlsRecording(String date,
+      {int startFromSeconds = 0}) async {
     if (_isLoadingSegment) return;
     setState(() {
       _isLoadingSegment = true;
@@ -197,65 +233,34 @@ class _LiveViewScreenState extends ConsumerState<LiveViewScreen> {
 
     try {
       final token = await ref.read(secureStorageProvider).getToken();
-      final url =
-          '${AppConfig.apiBaseUrl}${ApiPaths.segmentStream(segmentId)}';
-
-      try {
-        final testDio = Dio(BaseOptions(
-          connectTimeout: const Duration(seconds: 10),
-          receiveTimeout: const Duration(seconds: 10),
-        ));
-        await testDio.head(
-          url,
-          options: Options(headers: {
-            'Authorization': 'Bearer $token',
-            'Accept': 'video/mp4',
-          }),
-        );
-        testDio.close();
-      } catch (e) {
-        if (e is DioException && e.response != null) {
-          final statusCode = e.response?.statusCode ?? 0;
-          String errorMsg;
-          if (statusCode == 401) {
-            errorMsg = 'Sessao expirada. Faca login novamente.';
-          } else if (statusCode == 404) {
-            errorMsg = 'Gravacao nao encontrada no servidor.';
-          } else {
-            errorMsg = 'Erro do servidor ($statusCode).';
-          }
-          if (mounted) {
-            setState(() {
-              _errorMessage = errorMsg;
-              _isLoadingSegment = false;
-            });
-          }
-          return;
-        }
+      var hlsUrl =
+          '${AppConfig.apiBaseUrl}${ApiPaths.cameraHlsPlaylist(widget.cameraId)}?date=$date';
+      if (startFromSeconds > 0) {
+        hlsUrl += '&start_from=$startFromSeconds';
       }
+
+      debugPrint('[HLS] _playHlsRecording date=$date startFrom=${startFromSeconds}s url=$hlsUrl');
 
       if (!_surfaceReady) {
         await Future.delayed(const Duration(milliseconds: 800));
       }
 
       await _player.open(
-        Media(url, httpHeaders: {
+        Media(hlsUrl, httpHeaders: {
           'Authorization': 'Bearer $token',
-          'Accept': 'video/mp4',
         }),
       );
+      _currentHlsDate = date;
+      _currentHlsStartFrom = startFromSeconds;
 
-      if (offsetSeconds > 0) {
-        await _player.seek(Duration(seconds: offsetSeconds));
-      }
-
-      _currentSegmentId = segmentId;
-      ref
-          .read(timelineProvider(widget.cameraId).notifier)
-          .setActiveSegment(segmentId);
-
+      debugPrint('[HLS] Playlist opened, calling play()');
       await _player.play();
+
+      // Re-enable automatic timeline sync after playback starts
+      _userSeekingTimeline = false;
     } catch (e) {
+      debugPrint('[HLS] Error: $e');
+      _userSeekingTimeline = false;
       if (mounted) {
         setState(() => _errorMessage = 'Erro ao reproduzir: $e');
       }
@@ -264,54 +269,99 @@ class _LiveViewScreenState extends ConsumerState<LiveViewScreen> {
     }
   }
 
-  void _playNextSegment() {
+  /// Calculate HLS playlist seek position from an absolute time.
+  /// Maps real-world time -> cumulative playlist offset.
+  Duration _calculateHlsSeekPosition(DateTime targetTime) {
     final timelineState = ref.read(timelineProvider(widget.cameraId));
-    if (timelineState.data == null || _currentSegmentId == null) return;
+    if (timelineState.data == null) {
+      debugPrint('[HLS] _calculateHlsSeekPosition: no timeline data!');
+      return Duration.zero;
+    }
 
     final segments = timelineState.data!.segments;
-    final currentIndex =
-        segments.indexWhere((s) => s.id == _currentSegmentId);
+    int cumulativeSeconds = 0;
 
-    if (currentIndex >= 0 && currentIndex < segments.length - 1) {
-      _playSegment(segments[currentIndex + 1].id);
-    } else {
-      ref.read(timelineProvider(widget.cameraId).notifier).setPlaying(false);
+    for (int i = 0; i < segments.length; i++) {
+      final segment = segments[i];
+      if (segment.startsAt == null) continue;
+      final segEnd = segment.endsAt ??
+          segment.startsAt!.add(
+              Duration(seconds: segment.durationSeconds));
+
+      if ((targetTime.isAfter(segment.startsAt!) || targetTime.isAtSameMomentAs(segment.startsAt!)) &&
+          targetTime.isBefore(segEnd)) {
+        final offsetInSegment =
+            targetTime.difference(segment.startsAt!).inSeconds;
+        final result = cumulativeSeconds + offsetInSegment;
+        debugPrint('[HLS] _calculateHlsSeekPosition: target=$targetTime -> seg[$i] start=${segment.startsAt} offset=$offsetInSegment cumulative=$cumulativeSeconds -> result=${result}s');
+        return Duration(seconds: result);
+      }
+
+      if (targetTime.isAfter(segEnd) || targetTime.isAtSameMomentAs(segEnd)) {
+        cumulativeSeconds += segment.durationSeconds;
+      }
     }
+
+    debugPrint('[HLS] _calculateHlsSeekPosition: target=$targetTime NOT in any segment, returning ${cumulativeSeconds}s (total segments=${segments.length})');
+    if (segments.isNotEmpty) {
+      debugPrint('[HLS]   first seg starts=${segments.first.startsAt}, last seg starts=${segments.last.startsAt}');
+    }
+    return Duration(seconds: cumulativeSeconds);
   }
 
   void _onTimelineTimeSelected(DateTime time) {
+    // Block automatic timeline updates while user is interacting
+    _userSeekingTimeline = true;
+
     final notifier = ref.read(timelineProvider(widget.cameraId).notifier);
-    final info = notifier.findSegmentAtTime(time);
-    if (info != null) {
-      notifier.setPlaybackTime(time);
-      _playSegment(info.segmentId, offsetSeconds: info.offsetSeconds);
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Nenhuma gravacao neste horario'),
-          duration: Duration(seconds: 2),
-        ),
-      );
-    }
+    notifier.setPlaybackTime(time);
+
+    final date = '${time.year.toString().padLeft(4, '0')}-'
+        '${time.month.toString().padLeft(2, '0')}-'
+        '${time.day.toString().padLeft(2, '0')}';
+
+    final seekPos = _calculateHlsSeekPosition(time);
+    debugPrint('[HLS] _onTimelineTimeSelected time=$time seekPos=${seekPos.inSeconds}s');
+
+    _seekDebounce?.cancel();
+    _seekDebounce = Timer(const Duration(milliseconds: 500), () {
+      _playHlsRecording(date, startFromSeconds: seekPos.inSeconds);
+    });
   }
 
   void _updateTimelinePosition() {
-    if (_isLiveMode) return;
+    if (_isLiveMode || !_player.state.playing || _userSeekingTimeline) return;
     final timelineState = ref.read(timelineProvider(widget.cameraId));
-    if (timelineState.activeSegmentId == null || !_player.state.playing) return;
+    if (timelineState.data == null) return;
 
-    final activeSegment = timelineState.data?.segments.firstWhere(
-      (s) => s.id == timelineState.activeSegmentId,
-      orElse: () => timelineState.data!.segments.first,
-    );
+    final segments = timelineState.data!.segments;
+    // Player pos is relative to the trimmed playlist (starting from _currentHlsStartFrom).
+    // We need to add the offset back to map to the full cumulative timeline.
+    final playerPos = _player.state.position.inSeconds + _currentHlsStartFrom;
 
-    if (activeSegment?.startsAt != null) {
-      final playerPos = _player.state.position;
-      final currentTime = activeSegment!.startsAt!
-          .add(Duration(seconds: playerPos.inSeconds));
-      ref
-          .read(timelineProvider(widget.cameraId).notifier)
-          .setPlaybackTime(currentTime);
+    int cumulativeSeconds = 0;
+    for (final segment in segments) {
+      if (segment.startsAt == null) continue;
+      final dur = segment.durationSeconds;
+
+      if (playerPos >= cumulativeSeconds && playerPos < cumulativeSeconds + dur) {
+        final offsetInSegment = playerPos - cumulativeSeconds;
+        final currentTime = segment.startsAt!
+            .add(Duration(seconds: offsetInSegment));
+        ref
+            .read(timelineProvider(widget.cameraId).notifier)
+            .setPlaybackTime(currentTime);
+
+        if (_currentSegmentId != segment.id) {
+          _currentSegmentId = segment.id;
+          ref
+              .read(timelineProvider(widget.cameraId).notifier)
+              .setActiveSegment(segment.id);
+        }
+        return;
+      }
+
+      cumulativeSeconds += dur;
     }
   }
 
@@ -454,9 +504,11 @@ class _LiveViewScreenState extends ConsumerState<LiveViewScreen> {
                       OutlinedButton(
                         onPressed: () {
                           setState(() => _errorMessage = null);
-                          _isLiveMode ? _initLiveStream() : null;
-                          if (!_isLiveMode && _currentSegmentId != null) {
-                            _playSegment(_currentSegmentId!);
+                          if (_isLiveMode) {
+                            _initLiveStream();
+                          } else if (_currentHlsDate != null) {
+                            _playHlsRecording(_currentHlsDate!,
+                                startFromSeconds: _currentHlsStartFrom);
                           }
                         },
                         style: OutlinedButton.styleFrom(
@@ -718,7 +770,33 @@ class _ModeHeader extends StatelessWidget {
   }
 }
 
-// ─── VERTICAL TIMELINE ─────────────────────────────────
+// ─── VERTICAL TIMELINE (CONDENSED) ────────────────────
+//
+// Shows ONLY time periods with recordings, not the full 24 hours.
+// Gaps between recordings are shown as compact separators.
+// Scrolling/dragging navigates video playback.
+
+enum _BlockType { recording, gap }
+
+class _LayoutBlock {
+  final _BlockType type;
+  final double startY;
+  final double height;
+  final TimelineRange? range;
+  final DateTime? gapStart;
+  final DateTime? gapEnd;
+
+  const _LayoutBlock({
+    required this.type,
+    required this.startY,
+    required this.height,
+    this.range,
+    this.gapStart,
+    this.gapEnd,
+  });
+
+  double get endY => startY + height;
+}
 
 class _VerticalTimeline extends StatefulWidget {
   final TimelineState timelineState;
@@ -739,360 +817,328 @@ class _VerticalTimeline extends StatefulWidget {
 
 class _VerticalTimelineState extends State<_VerticalTimeline> {
   final ScrollController _scrollController = ScrollController();
-  // 5 pixels per minute = 300px per hour, good spacing for thumbnails
-  static const double _pixelsPerMinute = 5.0;
-  static const double _totalHeight = _pixelsPerMinute * 60 * 24;
-  static const double _timeColumnWidth = 60.0;
-  static const double _thumbWidth = 140.0;
-  static const double _thumbHeight = 80.0;
-  // Min spacing between thumbnails to prevent overlap
-  static const double _minThumbSpacing = 90.0;
+  static const double _pixelsPerMinute = 6.0;
+  static const double _gapHeight = 52.0;
+  static const double _minRangeHeight = 80.0;
+  bool _isUserScrolling = false;
+  bool _programmaticScroll = false;
 
-  DateTime get _dayStart {
-    final date = widget.timelineState.selectedDate ?? DateTime.now();
-    return DateTime(date.year, date.month, date.day);
+  // Pre-calculated condensed layout
+  List<_LayoutBlock> _layout = [];
+  double _totalContentHeight = 0;
+
+  DateTime get _firstRecordingTime {
+    final ranges = widget.timelineState.ranges;
+    if (ranges.isNotEmpty) return ranges.first.start;
+    return DateTime.now();
   }
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance
-        .addPostFrameCallback((_) => _scrollToCurrentTime());
+    _scrollController.addListener(_onScroll);
+    _buildLayout();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _scrollToTime(
+          widget.currentPlaybackTime ?? _firstRecordingTime,
+          animate: false);
+    });
   }
 
   @override
   void didUpdateWidget(_VerticalTimeline old) {
     super.didUpdateWidget(old);
-    if (old.timelineState.selectedDate != widget.timelineState.selectedDate) {
-      WidgetsBinding.instance
-          .addPostFrameCallback((_) => _scrollToCurrentTime());
+
+    if (old.timelineState.ranges != widget.timelineState.ranges ||
+        old.timelineState.selectedDate != widget.timelineState.selectedDate) {
+      _buildLayout();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _scrollToTime(
+            widget.currentPlaybackTime ?? _firstRecordingTime,
+            animate: false);
+      });
+    }
+
+    // Follow playback position when not user-scrolling
+    // Must defer to avoid setState during build (scroll notifications → AppBar)
+    if (!_isUserScrolling &&
+        widget.currentPlaybackTime != null &&
+        old.currentPlaybackTime != widget.currentPlaybackTime) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _scrollToTime(widget.currentPlaybackTime!, animate: false);
+        }
+      });
     }
   }
 
-  void _scrollToCurrentTime() {
-    final time = widget.currentPlaybackTime ?? DateTime.now();
-    final offset = _timeToY(time);
-    final viewportHeight = _scrollController.hasClients
-        ? _scrollController.position.viewportDimension
-        : MediaQuery.of(context).size.height * 0.4;
-    final target =
-        (offset - viewportHeight / 2).clamp(0.0, _totalHeight);
+  /// Build condensed layout: only recording ranges + gap indicators.
+  void _buildLayout() {
+    final ranges = widget.timelineState.ranges;
+    _layout = [];
+    double y = 0;
 
-    if (_scrollController.hasClients) {
-      _scrollController.animateTo(
-        target,
-        duration: const Duration(milliseconds: 400),
-        curve: Curves.easeOut,
-      );
+    for (int i = 0; i < ranges.length; i++) {
+      // Gap before this range (if not first)
+      if (i > 0) {
+        _layout.add(_LayoutBlock(
+          type: _BlockType.gap,
+          startY: y,
+          height: _gapHeight,
+          gapStart: ranges[i - 1].end,
+          gapEnd: ranges[i].start,
+        ));
+        y += _gapHeight;
+      }
+
+      // Recording range block
+      final range = ranges[i];
+      final durationMinutes = range.duration.inSeconds / 60.0;
+      final height = (durationMinutes * _pixelsPerMinute)
+          .clamp(_minRangeHeight, double.infinity);
+
+      _layout.add(_LayoutBlock(
+        type: _BlockType.recording,
+        startY: y,
+        height: height,
+        range: range,
+      ));
+      y += height;
+    }
+
+    _totalContentHeight = y;
+  }
+
+  void _onScroll() {
+    if (_programmaticScroll) return;
+    if (_isUserScrolling && _scrollController.hasClients) {
+      final time = _offsetToTime(_scrollController.offset);
+      if (time != null) {
+        widget.onTimeSelected(time);
+      }
     }
   }
 
-  double _timeToY(DateTime time) {
-    final diff = time.difference(_dayStart);
-    return (diff.inMinutes * _pixelsPerMinute).clamp(0.0, _totalHeight);
+  /// Convert scroll offset → real-world DateTime.
+  /// Returns null only if layout is empty.
+  DateTime? _offsetToTime(double offset) {
+    for (final block in _layout) {
+      if (offset < block.startY || offset > block.endY) continue;
+
+      if (block.type == _BlockType.recording) {
+        final range = block.range!;
+        final fraction =
+            ((offset - block.startY) / block.height).clamp(0.0, 1.0);
+        final seconds = (range.duration.inSeconds * fraction).round();
+        return range.start.add(Duration(seconds: seconds));
+      } else {
+        // In a gap — snap to nearest recording boundary
+        final mid = block.startY + block.height / 2;
+        return offset < mid ? block.gapStart : block.gapEnd;
+      }
+    }
+    final ranges = widget.timelineState.ranges;
+    if (ranges.isNotEmpty) return ranges.last.end;
+    return null;
   }
 
-  DateTime _yToTime(double y) {
-    final minutes = y / _pixelsPerMinute;
-    return _dayStart.add(Duration(minutes: minutes.round()));
+  /// Convert real-world DateTime → scroll offset.
+  double _timeToOffset(DateTime time) {
+    for (final block in _layout) {
+      if (block.type != _BlockType.recording) continue;
+      final range = block.range!;
+      if (!time.isBefore(range.start) && time.isBefore(range.end)) {
+        final fraction =
+            time.difference(range.start).inSeconds / range.duration.inSeconds;
+        return block.startY + (block.height * fraction);
+      }
+    }
+    return _totalContentHeight;
+  }
+
+  void _scrollToTime(DateTime time, {bool animate = true}) {
+    if (!_scrollController.hasClients) return;
+    final maxExtent = _scrollController.position.maxScrollExtent;
+    final target = _timeToOffset(time).clamp(0.0, maxExtent);
+    _programmaticScroll = true;
+    if (animate) {
+      _scrollController
+          .animateTo(target,
+              duration: const Duration(milliseconds: 200),
+              curve: Curves.easeOut)
+          .then((_) => _programmaticScroll = false);
+    } else {
+      _scrollController.jumpTo(target);
+      _programmaticScroll = false;
+    }
+  }
+
+  DateTime get _playheadTime {
+    if (widget.currentPlaybackTime != null) return widget.currentPlaybackTime!;
+    if (!_scrollController.hasClients) return DateTime.now();
+    return _offsetToTime(_scrollController.offset) ?? DateTime.now();
   }
 
   @override
   void dispose() {
+    _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    final ranges = widget.timelineState.ranges;
-    final segments = widget.timelineState.data?.segments ?? [];
-
     if (widget.timelineState.isLoading) {
       return Container(
-        color: const Color(0xFF2C3E50),
+        color: const Color(0xFF1A2530),
         child: const Center(
-          child: CircularProgressIndicator(strokeWidth: 2),
+          child: CircularProgressIndicator(
+              strokeWidth: 2, color: Colors.white38),
         ),
       );
     }
 
-    return Container(
-      color: const Color(0xFF2C3E50),
-      child: GestureDetector(
-        onTapUp: (details) {
-          final renderBox = context.findRenderObject() as RenderBox;
-          final localPos =
-              renderBox.globalToLocal(details.globalPosition);
-          final scrollOffset = _scrollController.offset;
-          final y = scrollOffset + localPos.dy;
-          final time = _yToTime(y);
-          widget.onTimeSelected(time);
-        },
-        child: SingleChildScrollView(
-          controller: _scrollController,
-          child: SizedBox(
-            height: _totalHeight,
-            child: CustomPaint(
-              size: Size(
-                  MediaQuery.of(context).size.width, _totalHeight),
-              painter: _VerticalTimelinePainter(
-                dayStart: _dayStart,
-                ranges: ranges,
-                pixelsPerMinute: _pixelsPerMinute,
-                timeColumnWidth: _timeColumnWidth,
-              ),
-              child: Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  // Segment thumbnails
-                  ..._buildThumbnails(segments),
-                  // Playback time indicator (recording mode)
-                  if (!widget.isLiveMode &&
-                      widget.currentPlaybackTime != null)
-                    _buildTimeIndicator(
-                      widget.currentPlaybackTime!,
-                      ZyColors.primary,
-                    ),
-                  // Now indicator (live mode)
-                  if (widget.isLiveMode)
-                    _buildTimeIndicator(DateTime.now(), ZyColors.primary),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// Build thumbnails with proper spacing to prevent overlap.
-  /// Groups close segments and ensures minimum vertical distance between cards.
-  List<Widget> _buildThumbnails(List segments) {
-    final widgets = <Widget>[];
-
-    if (segments.isEmpty) return widgets;
-
-    // Filter segments with valid start times and sort
-    final validSegments = segments
-        .where((s) => s.startsAt != null)
-        .toList()
-      ..sort((a, b) => a.startsAt!.compareTo(b.startsAt!));
-
-    if (validSegments.isEmpty) return widgets;
-
-    // Place thumbnails ensuring no overlap
-    double lastPlacedY = -_minThumbSpacing * 2;
-
-    for (final segment in validSegments) {
-      final idealY = _timeToY(segment.startsAt!);
-
-      // Skip if too close to last placed thumbnail
-      if ((idealY - lastPlacedY) < _minThumbSpacing) continue;
-
-      final isActive =
-          widget.timelineState.activeSegmentId == segment.id;
-
-      final thumbnailUrl = segment.thumbnailUrl;
-      final hasThumbnail =
-          thumbnailUrl != null && thumbnailUrl.isNotEmpty;
-
-      widgets.add(
-        Positioned(
-          top: idealY - _thumbHeight / 2,
-          right: 12,
-          child: GestureDetector(
-            onTap: () => widget.onTimeSelected(segment.startsAt!),
-            child: Container(
-              width: _thumbWidth,
-              height: _thumbHeight,
-              decoration: BoxDecoration(
-                color: const Color(0xFF1A252F),
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(
-                  color: isActive ? ZyColors.primary : Colors.white24,
-                  width: isActive ? 2.0 : 0.5,
+    // Empty state: no recordings
+    if (_layout.isEmpty || widget.timelineState.ranges.isEmpty) {
+      return Container(
+        color: const Color(0xFF1A2530),
+        child: Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.videocam_off_outlined,
+                  color: Colors.white.withValues(alpha: 0.3), size: 48),
+              const SizedBox(height: 12),
+              Text(
+                'Sem gravacoes neste dia',
+                style: TextStyle(
+                  color: Colors.white.withValues(alpha: 0.4),
+                  fontSize: 14,
                 ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: 0.3),
-                    blurRadius: 4,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
               ),
-              clipBehavior: Clip.antiAlias,
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  // Thumbnail image or placeholder
-                  if (hasThumbnail)
-                    Image.network(
-                      _buildThumbnailUrl(thumbnailUrl),
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) =>
-                          _thumbnailPlaceholder(),
-                    )
-                  else
-                    _thumbnailPlaceholder(),
-                  // Time overlay at bottom-left
-                  Positioned(
-                    bottom: 3,
-                    left: 4,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 5, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.7),
-                        borderRadius: BorderRadius.circular(3),
-                      ),
-                      child: Text(
-                        _formatTimeShort(segment.startsAt!),
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w500,
-                          fontFamily: 'monospace',
-                        ),
-                      ),
+              if (widget.timelineState.data != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    '${widget.timelineState.data!.totalSegments} segmentos',
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.25),
+                      fontSize: 11,
                     ),
                   ),
-                  // Duration overlay at bottom-right
-                  if (segment.durationSeconds > 0)
-                    Positioned(
-                      bottom: 3,
-                      right: 4,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 4, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: Colors.black.withValues(alpha: 0.7),
-                          borderRadius: BorderRadius.circular(3),
-                        ),
-                        child: Text(
-                          _formatDuration(segment.durationSeconds),
-                          style: const TextStyle(
-                            color: Colors.white70,
-                            fontSize: 9,
-                            fontFamily: 'monospace',
-                          ),
-                        ),
-                      ),
-                    ),
-                  // Active indicator
-                  if (isActive)
-                    Positioned(
-                      top: 3,
-                      right: 4,
-                      child: Container(
-                        width: 8,
-                        height: 8,
-                        decoration: const BoxDecoration(
-                          color: ZyColors.danger,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                    ),
-                ],
+                ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    final viewportPadding = MediaQuery.of(context).size.height * 0.4;
+
+    return Container(
+      color: const Color(0xFF1A2530),
+      child: Stack(
+        children: [
+          // Scrollable condensed timeline
+          NotificationListener<ScrollNotification>(
+            onNotification: (notification) {
+              if (notification is ScrollStartNotification &&
+                  notification.dragDetails != null) {
+                _isUserScrolling = true;
+              } else if (notification is ScrollEndNotification) {
+                _isUserScrolling = false;
+              }
+              return false;
+            },
+            child: SingleChildScrollView(
+              controller: _scrollController,
+              physics: const ClampingScrollPhysics(),
+              child: SizedBox(
+                height: _totalContentHeight + viewportPadding,
+                width: MediaQuery.of(context).size.width,
+                child: CustomPaint(
+                  size: Size(MediaQuery.of(context).size.width,
+                      _totalContentHeight + viewportPadding),
+                  painter: _CondensedTimelinePainter(
+                    layout: _layout,
+                    segments: widget.timelineState.data?.segments ?? [],
+                  ),
+                ),
               ),
             ),
           ),
-        ),
-      );
-
-      // Draw a line from timeline to thumbnail
-      widgets.add(
-        Positioned(
-          top: idealY - 0.5,
-          left: _timeColumnWidth,
-          right: 12 + _thumbWidth,
-          child: Container(
-            height: 1,
-            color: isActive
-                ? ZyColors.primary.withValues(alpha: 0.6)
-                : Colors.white.withValues(alpha: 0.15),
+          // Fixed playhead at top
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: _FixedPlayhead(
+              time: _playheadTime,
+              isLive: widget.isLiveMode,
+            ),
           ),
-        ),
-      );
-
-      lastPlacedY = idealY;
-    }
-
-    return widgets;
-  }
-
-  Widget _thumbnailPlaceholder() {
-    return Container(
-      color: const Color(0xFF1A252F),
-      child: const Center(
-        child: Icon(
-          Icons.videocam_outlined,
-          color: Colors.white24,
-          size: 28,
-        ),
+        ],
       ),
     );
   }
+}
 
-  String _buildThumbnailUrl(String path) {
-    if (path.startsWith('http')) return path;
-    return '${AppConfig.apiBaseUrl.replaceAll('/api/v1', '')}$path';
-  }
+/// Fixed playhead indicator — always visible at the top of the timeline.
+class _FixedPlayhead extends StatelessWidget {
+  final DateTime time;
+  final bool isLive;
 
-  /// Time indicator with label showing the current time
-  Widget _buildTimeIndicator(DateTime time, Color color) {
-    final y = _timeToY(time);
+  const _FixedPlayhead({required this.time, required this.isLive});
 
-    return Positioned(
-      top: y - 10,
-      left: 0,
-      right: 0,
+  @override
+  Widget build(BuildContext context) {
+    final t = time.toLocal();
+    final timeStr = '${t.hour.toString().padLeft(2, '0')}:'
+        '${t.minute.toString().padLeft(2, '0')}:'
+        '${t.second.toString().padLeft(2, '0')}';
+
+    return IgnorePointer(
       child: SizedBox(
-        height: 20,
+        height: 28,
         child: Row(
           children: [
-            // Time label
             Container(
-              width: _timeColumnWidth - 2,
-              alignment: Alignment.centerRight,
-              padding: const EdgeInsets.only(right: 4),
-              child: Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 4, vertical: 1),
-                decoration: BoxDecoration(
-                  color: color,
-                  borderRadius: BorderRadius.circular(3),
-                ),
-                child: Text(
-                  _formatTimeShort(time),
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontSize: 9,
-                    fontWeight: FontWeight.w700,
-                    fontFamily: 'monospace',
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              margin: const EdgeInsets.only(left: 4),
+              decoration: BoxDecoration(
+                color: isLive ? ZyColors.danger : ZyColors.primary,
+                borderRadius: BorderRadius.circular(4),
+                boxShadow: [
+                  BoxShadow(
+                    color: (isLive ? ZyColors.danger : ZyColors.primary)
+                        .withValues(alpha: 0.4),
+                    blurRadius: 6,
                   ),
+                ],
+              ),
+              child: Text(
+                timeStr,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  fontFamily: 'monospace',
                 ),
               ),
             ),
-            // Line with dot
             Expanded(
-              child: Stack(
-                alignment: Alignment.centerLeft,
-                children: [
-                  Container(
-                    height: 2,
-                    color: color,
+              child: Container(
+                height: 2,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [
+                      isLive ? ZyColors.danger : ZyColors.primary,
+                      (isLive ? ZyColors.danger : ZyColors.primary)
+                          .withValues(alpha: 0.1),
+                    ],
                   ),
-                  Container(
-                    width: 10,
-                    height: 10,
-                    decoration: BoxDecoration(
-                      color: color,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.white, width: 1.5),
-                    ),
-                  ),
-                ],
+                ),
               ),
             ),
           ],
@@ -1100,125 +1146,245 @@ class _VerticalTimelineState extends State<_VerticalTimeline> {
       ),
     );
   }
-
-  String _formatTimeShort(DateTime time) {
-    final t = time.toLocal();
-    return '${t.hour.toString().padLeft(2, '0')}:'
-        '${t.minute.toString().padLeft(2, '0')}:'
-        '${t.second.toString().padLeft(2, '0')}';
-  }
-
-  String _formatDuration(int seconds) {
-    final m = seconds ~/ 60;
-    final s = seconds % 60;
-    if (m > 0) return '${m}m${s > 0 ? ' ${s}s' : ''}';
-    return '${s}s';
-  }
 }
 
-class _VerticalTimelinePainter extends CustomPainter {
-  final DateTime dayStart;
-  final List ranges;
-  final double pixelsPerMinute;
-  final double timeColumnWidth;
+/// Custom painter for condensed timeline.
+/// Only renders recording ranges and gap indicators — not full 24h.
+class _CondensedTimelinePainter extends CustomPainter {
+  final List<_LayoutBlock> layout;
+  final List segments;
 
-  _VerticalTimelinePainter({
-    required this.dayStart,
-    required this.ranges,
-    required this.pixelsPerMinute,
-    required this.timeColumnWidth,
+  _CondensedTimelinePainter({
+    required this.layout,
+    required this.segments,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
-    _drawGrid(canvas, size);
-    _drawRanges(canvas, size);
+    for (final block in layout) {
+      if (block.type == _BlockType.recording) {
+        _drawRecordingBlock(canvas, size, block);
+      } else {
+        _drawGapBlock(canvas, size, block);
+      }
+    }
   }
 
-  void _drawGrid(Canvas canvas, Size size) {
-    final gridPaint = Paint()
-      ..color = Colors.white.withValues(alpha: 0.06)
-      ..strokeWidth = 0.5;
+  void _drawRecordingBlock(
+      Canvas canvas, Size size, _LayoutBlock block) {
+    final range = block.range!;
+    final startY = block.startY;
+    final height = block.height;
+    const barLeft = 70.0;
+    final barWidth = size.width - barLeft - 8;
 
-    final subGridPaint = Paint()
-      ..color = Colors.white.withValues(alpha: 0.03)
-      ..strokeWidth = 0.5;
-
-    final textStyle = TextStyle(
-      color: Colors.white.withValues(alpha: 0.35),
-      fontSize: 10,
-      fontFamily: 'monospace',
+    // Recording bar background with gradient
+    final barRect =
+        Rect.fromLTWH(barLeft, startY + 2, barWidth, height - 4);
+    final gradient = LinearGradient(
+      begin: Alignment.centerLeft,
+      end: Alignment.centerRight,
+      colors: [
+        ZyColors.primary.withValues(alpha: 0.30),
+        ZyColors.primary.withValues(alpha: 0.10),
+      ],
     );
+    final barPaint = Paint()..shader = gradient.createShader(barRect);
+    canvas.drawRRect(
+        RRect.fromRectAndRadius(barRect, const Radius.circular(4)),
+        barPaint);
 
-    for (var hour = 0; hour <= 24; hour++) {
-      final y = hour * 60 * pixelsPerMinute;
+    // Left accent bar
+    final accentPaint = Paint()
+      ..color = ZyColors.primary.withValues(alpha: 0.7)
+      ..strokeWidth = 3
+      ..strokeCap = StrokeCap.round;
+    canvas.drawLine(Offset(barLeft, startY + 4),
+        Offset(barLeft, startY + height - 4), accentPaint);
 
-      // Hour line
-      canvas.drawLine(
-        Offset(timeColumnWidth, y),
-        Offset(size.width, y),
-        gridPaint,
-      );
+    // Start time label (bold)
+    _drawTimeLabel(canvas, range.start, startY + 4, bold: true);
 
-      // Hour label
-      if (hour < 24) {
-        final label = '${hour.toString().padLeft(2, '0')}h';
+    // End time label
+    if (height > 50) {
+      _drawTimeLabel(canvas, range.end, startY + height - 16,
+          bold: false);
+    }
+
+    // Interval marks inside the recording bar
+    final durationMin = range.duration.inMinutes;
+    final interval = durationMin > 120 ? 30 : 15;
+    if (durationMin > 0) {
+      final startMinute = range.start.hour * 60 + range.start.minute;
+      final firstMark = ((startMinute / interval).ceil() * interval)
+          .toInt();
+
+      for (var m = firstMark;
+          m < startMinute + durationMin;
+          m += interval) {
+        final markTime = DateTime(
+            range.start.year,
+            range.start.month,
+            range.start.day,
+            m ~/ 60,
+            m % 60);
+        if (markTime.isBefore(range.start) ||
+            !markTime.isBefore(range.end)) {
+          continue;
+        }
+
+        final fraction = markTime.difference(range.start).inSeconds /
+            range.duration.inSeconds;
+        final markY = startY + (height * fraction);
+
+        // Skip if too close to start/end labels
+        if (markY - startY < 22 || startY + height - markY < 22) {
+          continue;
+        }
+
+        // Tick line
+        final tickPaint = Paint()
+          ..color = Colors.white.withValues(alpha: 0.08)
+          ..strokeWidth = 0.5;
+        canvas.drawLine(Offset(barLeft + 4, markY),
+            Offset(size.width - 8, markY), tickPaint);
+
+        // Label
+        final label =
+            '${markTime.hour.toString().padLeft(2, '0')}:${markTime.minute.toString().padLeft(2, '0')}';
         final tp = TextPainter(
-          text: TextSpan(text: label, style: textStyle),
+          text: TextSpan(
+            text: label,
+            style: TextStyle(
+              color: Colors.white.withValues(alpha: 0.20),
+              fontSize: 9,
+              fontFamily: 'monospace',
+            ),
+          ),
           textDirection: TextDirection.ltr,
         );
         tp.layout();
-        tp.paint(canvas, Offset(6, y + 4));
-
-        // 30-minute sub-grid
-        final halfY = y + 30 * pixelsPerMinute;
-        canvas.drawLine(
-          Offset(timeColumnWidth, halfY),
-          Offset(size.width, halfY),
-          subGridPaint,
-        );
+        tp.paint(canvas, Offset(6, markY - 5));
       }
     }
 
-    // Vertical separator line
-    canvas.drawLine(
-      Offset(timeColumnWidth, 0),
-      Offset(timeColumnWidth, size.height),
-      gridPaint,
-    );
-  }
+    // Draw segment tick marks inside the bar (small dots at segment boundaries)
+    for (final seg in segments) {
+      if (seg.startsAt == null) continue;
+      if (seg.startsAt!.isBefore(range.start) ||
+          !seg.startsAt!.isBefore(range.end)) {
+        continue;
+      }
 
-  void _drawRanges(Canvas canvas, Size size) {
-    final rangePaint = Paint()
-      ..color = ZyColors.primary.withValues(alpha: 0.2);
-    final rangeBorderPaint = Paint()
-      ..color = ZyColors.primary.withValues(alpha: 0.4)
-      ..strokeWidth = 1
-      ..style = PaintingStyle.stroke;
+      final fraction = seg.startsAt!.difference(range.start).inSeconds /
+          range.duration.inSeconds;
+      final segY = startY + (height * fraction);
 
-    for (final range in ranges) {
-      final startY = _timeToY(range.start);
-      final endY = _timeToY(range.end);
-
-      final rect = Rect.fromLTRB(
-          timeColumnWidth + 1, startY, size.width, endY);
-      canvas.drawRect(rect, rangePaint);
-      canvas.drawLine(
-        Offset(timeColumnWidth + 1, startY),
-        Offset(timeColumnWidth + 1, endY),
-        rangeBorderPaint..strokeWidth = 3,
+      // Small segment indicator dot
+      canvas.drawCircle(
+        Offset(barLeft + barWidth - 12, segY),
+        2.5,
+        Paint()..color = ZyColors.primary.withValues(alpha: 0.6),
       );
+    }
+
+    // Duration label inside bar
+    final durText = _formatDuration(range.duration);
+    final durTp = TextPainter(
+      text: TextSpan(
+        text: durText,
+        style: TextStyle(
+          color: Colors.white.withValues(alpha: 0.35),
+          fontSize: 10,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+      textDirection: TextDirection.ltr,
+    );
+    durTp.layout();
+    if (height > 60) {
+      durTp.paint(
+          canvas, Offset(barLeft + 10, startY + height / 2 - 6));
     }
   }
 
-  double _timeToY(DateTime time) {
-    final diff = time.difference(dayStart);
-    return diff.inMinutes * pixelsPerMinute;
+  void _drawTimeLabel(Canvas canvas, DateTime time, double y,
+      {required bool bold}) {
+    final label =
+        '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
+    final style = TextStyle(
+      color:
+          Colors.white.withValues(alpha: bold ? 0.55 : 0.30),
+      fontSize: bold ? 11 : 9,
+      fontWeight: bold ? FontWeight.w600 : FontWeight.w400,
+      fontFamily: 'monospace',
+    );
+    final tp = TextPainter(
+      text: TextSpan(text: label, style: style),
+      textDirection: TextDirection.ltr,
+    );
+    tp.layout();
+    tp.paint(canvas, Offset(4, y));
+  }
+
+  void _drawGapBlock(Canvas canvas, Size size, _LayoutBlock block) {
+    final centerY = block.startY + block.height / 2;
+
+    // Dashed line
+    final dashPaint = Paint()
+      ..color = Colors.white.withValues(alpha: 0.06)
+      ..strokeWidth = 1;
+    for (double x = 8; x < size.width - 8; x += 8) {
+      canvas.drawLine(
+          Offset(x, centerY), Offset(x + 4, centerY), dashPaint);
+    }
+
+    // Gap duration label
+    if (block.gapStart != null && block.gapEnd != null) {
+      final gap = block.gapEnd!.difference(block.gapStart!);
+      final gapText = '${_formatDuration(gap)} sem gravacao';
+
+      final tp = TextPainter(
+        text: TextSpan(
+          text: gapText,
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.15),
+            fontSize: 10,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      );
+      tp.layout();
+
+      // Background pill for readability
+      final bgRect = Rect.fromCenter(
+        center: Offset(size.width / 2, centerY),
+        width: tp.width + 16,
+        height: 20,
+      );
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(bgRect, const Radius.circular(10)),
+        Paint()..color = const Color(0xFF1A2530),
+      );
+
+      tp.paint(canvas,
+          Offset((size.width - tp.width) / 2, centerY - 7));
+    }
+  }
+
+  String _formatDuration(Duration d) {
+    if (d.inHours > 0) {
+      return '${d.inHours}h ${d.inMinutes % 60}min';
+    }
+    if (d.inMinutes > 0) {
+      return '${d.inMinutes}min';
+    }
+    return '${d.inSeconds}s';
   }
 
   @override
-  bool shouldRepaint(covariant _VerticalTimelinePainter old) {
-    return old.ranges != ranges;
+  bool shouldRepaint(covariant _CondensedTimelinePainter old) {
+    return old.layout != layout || old.segments != segments;
   }
 }
 

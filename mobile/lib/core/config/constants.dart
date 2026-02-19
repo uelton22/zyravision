@@ -34,6 +34,8 @@ class ApiPaths {
       '/cameras/$cameraId/timeline/dates';
   static String cameraPlayback(String cameraId) =>
       '/cameras/$cameraId/playback';
+  static String cameraHlsPlaylist(String cameraId) =>
+      '/cameras/$cameraId/playback.m3u8';
   static String segmentStream(String segmentId) =>
       '/segments/$segmentId/stream';
   static String segmentDownload(String segmentId) =>
