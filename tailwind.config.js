@@ -98,6 +98,9 @@ export default {
             fontFamily: {
                 sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
                 mono: ['JetBrains Mono', 'Fira Code', 'monospace'],
+                /* Landing page — distinctive display + body */
+                'landing-display': ['Syne', 'system-ui', 'sans-serif'],
+                'landing-sans': ['DM Sans', 'system-ui', 'sans-serif'],
             },
             fontSize: {
                 'display-xl': ['4.5rem', { lineHeight: '1.1', letterSpacing: '-0.02em' }],
@@ -132,6 +135,9 @@ export default {
                 'zy-slide-up': 'zySlideUp 0.3s ease-out',
                 'zy-slide-down': 'zySlideDown 0.3s ease-out',
                 'zy-pulse': 'zyPulse 2s ease-in-out infinite',
+                'land-reveal': 'landReveal 0.6s ease-out forwards',
+                'land-reveal-left': 'landRevealLeft 0.6s ease-out forwards',
+                'land-reveal-right': 'landRevealRight 0.6s ease-out forwards',
             },
             keyframes: {
                 zyFadeIn: {
@@ -149,6 +155,19 @@ export default {
                 zyPulse: {
                     '0%, 100%': { opacity: '1' },
                     '50%': { opacity: '0.5' },
+                },
+                /* Landing: staggered reveal */
+                landReveal: {
+                    from: { opacity: '0', transform: 'translateY(20px)' },
+                    to: { opacity: '1', transform: 'translateY(0)' },
+                },
+                landRevealLeft: {
+                    from: { opacity: '0', transform: 'translateX(-24px)' },
+                    to: { opacity: '1', transform: 'translateX(0)' },
+                },
+                landRevealRight: {
+                    from: { opacity: '0', transform: 'translateX(24px)' },
+                    to: { opacity: '1', transform: 'translateX(0)' },
                 },
             },
             zIndex: {
