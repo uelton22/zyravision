@@ -7,38 +7,44 @@ class AppConfig {
   static const String appName = 'ZyraVision';
   static const String appVersion = '1.0.0';
 
-  // ─── API URLs ──────────────────────────────────────────
-  // Producao: altere para o dominio real quando fizer deploy
+  // ─── Produção (VPS) ────────────────────────────────────
+  // Endpoints em produção — usar com: flutter build apk --dart-define=PRODUCTION=true
+  static const String productionWebUrl = 'https://zyravision.com.br';
   static const String productionApiUrl = 'https://api.zyravision.com.br/api/v1';
   static const String productionStreamingUrl = 'https://stream.zyravision.com.br';
 
-  // ─── Modo de desenvolvimento ─────────────────────────────
-  // Escolha o modo adequado para seu ambiente de teste:
-  //
-  // DevMode.emulator  → usa 10.0.2.2 (emulador Android)
-  // DevMode.usbDevice → usa localhost (dispositivo fisico via adb reverse)
-  // DevMode.wifi      → usa IP da rede local (dispositivo fisico via WiFi)
-  static const DevMode _devMode = DevMode.usbDevice;
+  /// true quando compilar com --dart-define=PRODUCTION=true (build de produção).
+  /// Padrão: false (ambiente local/dev).
+  static bool get useProduction =>
+      const bool.fromEnvironment('PRODUCTION', defaultValue: false);
 
-  // IP da maquina na rede local (usar com DevMode.wifi)
-  // Descubra com: ifconfig | grep "inet " (macOS/Linux)
+  // ─── Desenvolvimento local ──────────────────────────────
+  // DevMode.emulator  → emulador Android (10.0.2.2)
+  // DevMode.usbDevice → dispositivo físico via USB (localhost + adb reverse)
+  // DevMode.wifi      → dispositivo na rede (IP local)
+  static const DevMode _devMode = DevMode.usbDevice;
   static const String _localNetworkIp = '192.168.1.100';
 
-  static String get apiBaseUrl {
-    if (_useProduction) return productionApiUrl;
-    return '$_localBaseUrl:8000/api/v1';
-  }
-
-  /// URL base para streaming HLS.
-  /// Em dev, usa a mesma porta do Nginx (8000) que faz proxy para o MediaMTX
-  /// e injeta auth automaticamente. NAO acessar MediaMTX diretamente (8888).
-  static String get streamingBaseUrl {
-    if (_useProduction) return productionStreamingUrl;
+  /// URL base do Laravel web (serve /storage/, landing, etc).
+  /// Em produção: zyravision.com.br
+  /// Em dev: mesmo host local.
+  static String get webBaseUrl {
+    if (useProduction) return productionWebUrl;
     return '$_localBaseUrl:8000';
   }
 
-  // Mude para true quando quiser apontar para producao
-  static const bool _useProduction = false;
+  static String get apiBaseUrl {
+    if (useProduction) return productionApiUrl;
+    return '$_localBaseUrl:8000/api/v1';
+  }
+
+  /// URL base para streaming HLS (live e playback).
+  /// Em produção: stream.zyravision.com.br
+  /// Em dev: mesmo host da API (Nginx proxy para MediaMTX).
+  static String get streamingBaseUrl {
+    if (useProduction) return productionStreamingUrl;
+    return '$_localBaseUrl:8000';
+  }
 
   static String get _localBaseUrl {
     if (kIsWeb) return 'http://localhost';
@@ -58,11 +64,12 @@ class AppConfig {
     return 'http://localhost';
   }
 
-  /// Log do modo de conexao atual (chamado no startup)
+  /// Log do modo de conexão atual (chamado no startup).
   static void logConfig() {
     debugPrint('╔══════════════════════════════════════════');
     debugPrint('║ ZyraVision - Config');
-    debugPrint('║ Mode: ${_useProduction ? "PRODUCTION" : "DEV ($_devMode)"}');
+    debugPrint('║ Mode: ${useProduction ? "PRODUCTION" : "DEV ($_devMode)"}');
+    debugPrint('║ Web:  $webBaseUrl');
     debugPrint('║ API:  $apiBaseUrl');
     debugPrint('║ HLS:  $streamingBaseUrl');
     debugPrint('╚══════════════════════════════════════════');

@@ -72,12 +72,20 @@ class _ZyCameraLivePreviewState extends State<ZyCameraLivePreview> {
     _player = Player(
       configuration: const PlayerConfiguration(
         logLevel: MPVLogLevel.error,
+        bufferSize: 2 * 1024 * 1024,
       ),
     );
+    final mpv = _player!.platform as dynamic;
+    mpv.setProperty('cache', 'no');
+    mpv.setProperty('cache-secs', '3');
+    mpv.setProperty('demuxer-lavf-o', 'fflags=+nobuffer');
+    mpv.setProperty('profile', 'low-latency');
+    mpv.setProperty('untimed', '');
+    mpv.setProperty('force-seekable', 'yes');
     _videoController = VideoController(
       _player!,
       configuration: const VideoControllerConfiguration(
-        enableHardwareAcceleration: false,
+        enableHardwareAcceleration: true,
       ),
     );
 
@@ -93,15 +101,12 @@ class _ZyCameraLivePreviewState extends State<ZyCameraLivePreview> {
 
     _initialized = true;
 
-    // Aguarda o widget ser construido para a surface estar disponivel
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
-      await Future.delayed(const Duration(milliseconds: 600));
       if (mounted && _player != null) {
         final url = _hlsUrl!;
         debugPrint('[LivePreview] Opening: $url');
         await _player!.open(Media(url));
-        // Volume zero para preview silencioso
         await _player!.setVolume(0);
       }
     });

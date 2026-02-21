@@ -34,9 +34,26 @@ class _MultiViewScreenState extends ConsumerState<MultiViewScreen> {
 
   void _initPlayers() {
     for (final id in widget.cameraIds.take(4)) {
-      final player = Player();
+      final player = Player(
+        configuration: const PlayerConfiguration(
+          logLevel: MPVLogLevel.error,
+          bufferSize: 2 * 1024 * 1024,
+        ),
+      );
+      final mpv = player.platform as dynamic;
+      mpv.setProperty('cache', 'no');
+      mpv.setProperty('cache-secs', '3');
+      mpv.setProperty('demuxer-lavf-o', 'fflags=+nobuffer');
+      mpv.setProperty('profile', 'low-latency');
+      mpv.setProperty('untimed', '');
+      mpv.setProperty('force-seekable', 'yes');
       _players[id] = player;
-      _controllers[id] = VideoController(player);
+      _controllers[id] = VideoController(
+        player,
+        configuration: const VideoControllerConfiguration(
+          enableHardwareAcceleration: true,
+        ),
+      );
     }
   }
 

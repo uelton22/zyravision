@@ -8,7 +8,7 @@ import '../../../domain/entities/camera.dart';
 import '../../../state/camera/camera_list_state.dart';
 import '../../../state/camera/camera_providers.dart';
 import '../../router/route_names.dart';
-import '../../widgets/camera/zy_camera_live_preview.dart';
+import '../../widgets/camera/zy_camera_thumbnail.dart';
 import '../../widgets/feedback/zy_badge.dart';
 import '../../widgets/feedback/zy_empty_state.dart';
 import '../../widgets/feedback/zy_skeleton.dart';
@@ -311,11 +311,12 @@ class _CameraListTile extends StatelessWidget {
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
-                    ZyCameraLivePreview(
-                      hlsPath: camera.stream?.urls?.hls,
+                    ZyCameraThumbnail(
+                      cameraId: camera.id,
+                      snapshotUrl: camera.snapshotUrl,
                       isOnline: camera.isOnline,
                       height: 75,
-                      fit: BoxFit.cover,
+                      refreshInterval: const Duration(seconds: 10),
                     ),
                     // Badge de status
                     if (camera.isOnline)

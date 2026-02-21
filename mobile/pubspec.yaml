@@ -37,6 +37,9 @@ dependencies:
   media_kit_video: ^1.2.5
   media_kit_libs_video: ^1.0.5
 
+  # WebRTC (live view low-latency via WHEP)
+  flutter_webrtc: ^0.12.12
+
   # Data Classes
   freezed_annotation: ^2.4.4
   json_annotation: ^4.9.0

@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/network/api_client.dart';
+import '../../../core/utils/url_helper.dart';
 
 /// Widget que carrega e exibe o snapshot da camera com autenticacao Bearer.
 /// Usa a snapshot_url da camera (campo retornado pela API).
@@ -95,29 +96,39 @@ class _ZyCameraThumbnailState extends ConsumerState<ZyCameraThumbnail> {
       final client = ref.read(apiClientProvider);
       final snapshotUrl = widget.snapshotUrl!;
 
-      // Constroi URL completa para o snapshot.
-      // A API retorna paths como "/storage/snapshots/xxx.jpg" (relativo ao host).
-      // O Dio do ApiClient tem baseUrl http://10.0.2.2:8000/api/v1.
-      // Para paths /storage/*, precisamos construir URL completa
-      // pois Dio com "/" resolve relativo ao host corretamente.
+      // Em produção, /storage/ paths são servidos pelo Laravel web (zyravision.com.br),
+      // não pelo subdomínio API. Usamos UrlHelper.storageUrl() que resolve para webBaseUrl.
+      // Para paths de API (/api/...), usamos o Dio do ApiClient com auth.
       String fullUrl;
       if (snapshotUrl.startsWith('http')) {
         fullUrl = snapshotUrl;
-      } else if (snapshotUrl.startsWith('/storage/') ||
-          snapshotUrl.startsWith('/api/')) {
-        // Path relativo ao host - Dio resolve corretamente com leading /
-        fullUrl = snapshotUrl;
+      } else if (snapshotUrl.startsWith('/storage/') || !snapshotUrl.startsWith('/api/')) {
+        final resolved = UrlHelper.storageUrl(snapshotUrl);
+        if (resolved == null) return;
+        fullUrl = resolved;
       } else {
-        fullUrl = '/storage/$snapshotUrl';
+        fullUrl = snapshotUrl;
       }
 
       debugPrint(
           '[Thumbnail] Loading: snapshotUrl=$snapshotUrl → fullUrl=$fullUrl');
 
-      final response = await client.dio.get<List<int>>(
-        fullUrl,
-        options: Options(responseType: ResponseType.bytes),
-      );
+      // /storage/ paths don't need Bearer auth — fetch directly.
+      // /api/ paths use the authenticated Dio client.
+      final Response<List<int>> response;
+      if (fullUrl.startsWith('http') && !fullUrl.contains('/api/')) {
+        final plainDio = Dio();
+        response = await plainDio.get<List<int>>(
+          fullUrl,
+          options: Options(responseType: ResponseType.bytes),
+        );
+        plainDio.close();
+      } else {
+        response = await client.dio.get<List<int>>(
+          fullUrl,
+          options: Options(responseType: ResponseType.bytes),
+        );
+      }
 
       if (!mounted || response.data == null || response.data!.isEmpty) return;
 

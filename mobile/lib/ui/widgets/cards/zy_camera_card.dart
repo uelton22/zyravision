@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../core/theme/zy_colors.dart';
 import '../../../core/theme/zy_spacing.dart';
 import '../../../domain/entities/camera_summary.dart';
-import '../camera/zy_camera_live_preview.dart';
+import '../camera/zy_camera_thumbnail.dart';
 import '../feedback/zy_badge.dart';
 
 class ZyCameraCard extends StatelessWidget {
@@ -46,10 +46,12 @@ class ZyCameraCard extends StatelessWidget {
             // Thumbnail com snapshot real da camera
             Stack(
               children: [
-                ZyCameraLivePreview(
-                  hlsPath: camera.hlsPath,
+                ZyCameraThumbnail(
+                  cameraId: camera.id,
+                  snapshotUrl: camera.snapshotUrl,
                   isOnline: camera.isOnline,
                   height: thumbnailHeight,
+                  refreshInterval: const Duration(seconds: 10),
                 ),
                 // Badges
                 if (camera.isOnline)

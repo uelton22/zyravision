@@ -19,6 +19,7 @@ import '../../../state/camera/camera_providers.dart';
 import '../../../state/recording/recording_providers.dart';
 import '../../../domain/entities/timeline_data.dart';
 import '../../../state/recording/timeline_state.dart';
+import '../../widgets/camera/zy_webrtc_player.dart';
 import '../../widgets/feedback/zy_badge.dart';
 
 class LiveViewScreen extends ConsumerStatefulWidget {
@@ -51,6 +52,10 @@ class _LiveViewScreenState extends ConsumerState<LiveViewScreen> {
   bool _streamInitialized = false;
   bool _surfaceReady = false;
 
+  // WebRTC state
+  bool _useWebRtc = false;
+  String? _webrtcPath;
+
   // Live vs Recording mode
   bool _isLiveMode = true;
   String? _currentSegmentId;
@@ -65,13 +70,16 @@ class _LiveViewScreenState extends ConsumerState<LiveViewScreen> {
     super.initState();
     _player = Player(
       configuration: const PlayerConfiguration(
-        logLevel: MPVLogLevel.v,
+        logLevel: MPVLogLevel.error,
+        bufferSize: 8 * 1024 * 1024,
       ),
     );
+    final mpv = _player.platform as dynamic;
+    mpv.setProperty('force-seekable', 'yes');
     _videoController = VideoController(
       _player,
       configuration: const VideoControllerConfiguration(
-        enableHardwareAcceleration: false,
+        enableHardwareAcceleration: true,
       ),
     );
 
@@ -146,13 +154,10 @@ class _LiveViewScreenState extends ConsumerState<LiveViewScreen> {
     super.didChangeDependencies();
     if (!_streamInitialized) {
       _streamInitialized = true;
-      WidgetsBinding.instance.addPostFrameCallback((_) async {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        await Future.delayed(const Duration(milliseconds: 800));
-        if (mounted) {
-          _surfaceReady = true;
-          _initLiveStream();
-        }
+        _surfaceReady = true;
+        _initLiveStream();
       });
     }
   }
@@ -179,29 +184,81 @@ class _LiveViewScreenState extends ConsumerState<LiveViewScreen> {
       final useCase = ref.read(getCameraDetailUseCaseProvider);
       final camera = await useCase(widget.cameraId);
 
-      String? hlsUrl;
-      if (camera.stream?.urls?.hls != null) {
-        hlsUrl = UrlHelper.hlsUrlFromPath(camera.stream!.urls!.hls);
-      }
-      if (hlsUrl == null && camera.stream?.mediamtxPath != null) {
-        hlsUrl = UrlHelper.hlsUrl(camera.stream!.mediamtxPath);
+      // Tenta WebRTC primeiro (latência <1s) se a câmera tiver mediamtxPath
+      if (camera.stream?.mediamtxPath != null && mounted) {
+        debugPrint('[LiveView] Trying WebRTC for ${camera.stream!.mediamtxPath}');
+        setState(() {
+          _useWebRtc = true;
+          _webrtcPath = camera.stream!.mediamtxPath!;
+        });
+        return;
       }
 
-      if (hlsUrl != null && mounted) {
-        try {
-          final testDio = Dio();
-          await testDio.get<String>(hlsUrl);
-          testDio.close();
-        } catch (_) {}
-
-        await _player.open(Media(hlsUrl));
-      } else if (mounted) {
-        setState(() => _errorMessage =
-            'Stream HLS nao disponivel.\nVerifique se a camera esta online.');
-      }
+      // Fallback: HLS
+      await _startHlsStream(camera);
     } catch (e) {
       if (mounted) {
         setState(() => _errorMessage = 'Erro ao carregar stream: $e');
+      }
+    }
+  }
+
+  void _setMpvLowLatency() {
+    final mpv = _player.platform as dynamic;
+    mpv.setProperty('cache', 'no');
+    mpv.setProperty('cache-secs', '3');
+    mpv.setProperty('demuxer-lavf-o', 'fflags=+nobuffer');
+    mpv.setProperty('profile', 'low-latency');
+    mpv.setProperty('untimed', '');
+  }
+
+  void _setMpvRecordingMode() {
+    final mpv = _player.platform as dynamic;
+    mpv.setProperty('cache', 'auto');
+    mpv.setProperty('cache-secs', '10');
+    mpv.setProperty('demuxer-lavf-o', '');
+    mpv.setProperty('profile', '');
+    mpv.setProperty('untimed', 'no');
+  }
+
+  Future<void> _startHlsStream(dynamic camera) async {
+    _setMpvLowLatency();
+
+    String? hlsUrl;
+    if (camera.stream?.urls?.hls != null) {
+      hlsUrl = UrlHelper.hlsUrlFromPath(camera.stream!.urls!.hls);
+    }
+    if (hlsUrl == null && camera.stream?.mediamtxPath != null) {
+      hlsUrl = UrlHelper.hlsUrl(camera.stream!.mediamtxPath);
+    }
+
+    if (hlsUrl != null && mounted) {
+      await _player.open(Media(hlsUrl));
+    } else if (mounted) {
+      setState(() => _errorMessage =
+          'Stream HLS nao disponivel.\nVerifique se a camera esta online.');
+    }
+  }
+
+  void _fallbackToHls() {
+    debugPrint('[LiveView] WebRTC failed, falling back to HLS');
+    if (!mounted) return;
+    setState(() {
+      _useWebRtc = false;
+      _webrtcPath = null;
+      _isBuffering = true;
+    });
+    _initLiveStreamHlsOnly();
+  }
+
+  Future<void> _initLiveStreamHlsOnly() async {
+    try {
+      final useCase = ref.read(getCameraDetailUseCaseProvider);
+      final camera = await useCase(widget.cameraId);
+      await _startHlsStream(camera);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _errorMessage = 'Erro ao carregar stream HLS: $e');
       }
     }
   }
@@ -235,10 +292,14 @@ class _LiveViewScreenState extends ConsumerState<LiveViewScreen> {
     setState(() {
       _isLoadingSegment = true;
       _isLiveMode = false;
+      _useWebRtc = false;
+      _webrtcPath = null;
       _errorMessage = null;
     });
 
     try {
+      _setMpvRecordingMode();
+
       final token = await ref.read(secureStorageProvider).getToken();
       var hlsUrl =
           '${AppConfig.apiBaseUrl}${ApiPaths.cameraHlsPlaylist(widget.cameraId)}?date=$date';
@@ -249,7 +310,7 @@ class _LiveViewScreenState extends ConsumerState<LiveViewScreen> {
       debugPrint('[HLS] _playHlsRecording date=$date startFrom=${startFromSeconds}s url=$hlsUrl');
 
       if (!_surfaceReady) {
-        await Future.delayed(const Duration(milliseconds: 800));
+        await Future.delayed(const Duration(milliseconds: 100));
       }
 
       await _player.open(
@@ -508,11 +569,27 @@ class _LiveViewScreenState extends ConsumerState<LiveViewScreen> {
         child: Stack(
           fit: StackFit.expand,
           children: [
-            Video(
-              controller: _videoController,
-              controls: NoVideoControls,
-              fill: Colors.black,
-            ),
+            if (_useWebRtc && _isLiveMode && _webrtcPath != null)
+              ZyWebrtcPlayer(
+                key: ValueKey('webrtc_fs_${widget.cameraId}'),
+                mediamtxPath: _webrtcPath!,
+                onFallbackToHls: _fallbackToHls,
+                onConnected: () {
+                  if (mounted) {
+                    setState(() {
+                      _isBuffering = false;
+                      _isPlaying = true;
+                    });
+                  }
+                },
+              )
+            else
+              Video(
+                key: const ValueKey('hls_player_fs'),
+                controller: _videoController,
+                controls: NoVideoControls,
+                fill: Colors.black,
+              ),
             if (_controlsVisible)
               _FullscreenOverlay(
                 cameraName: widget.cameraName,
@@ -533,11 +610,27 @@ class _LiveViewScreenState extends ConsumerState<LiveViewScreen> {
       child: Stack(
         alignment: Alignment.center,
         children: [
-          Video(
-            controller: _videoController,
-            controls: NoVideoControls,
-            fill: Colors.black,
-          ),
+          if (_useWebRtc && _isLiveMode && _webrtcPath != null)
+            ZyWebrtcPlayer(
+              key: ValueKey('webrtc_${widget.cameraId}'),
+              mediamtxPath: _webrtcPath!,
+              onFallbackToHls: _fallbackToHls,
+              onConnected: () {
+                if (mounted) {
+                  setState(() {
+                    _isBuffering = false;
+                    _isPlaying = true;
+                  });
+                }
+              },
+            )
+          else
+            Video(
+              key: const ValueKey('hls_player'),
+              controller: _videoController,
+              controls: NoVideoControls,
+              fill: Colors.black,
+            ),
           // Error overlay
           if (_errorMessage != null)
             Container(
@@ -582,8 +675,10 @@ class _LiveViewScreenState extends ConsumerState<LiveViewScreen> {
                 ),
               ),
             ),
-          // Buffering/loading overlay
-          if ((_isBuffering || _isLoadingSegment) && _errorMessage == null)
+          // Buffering/loading overlay (hidden when WebRTC handles its own loading)
+          if ((_isBuffering || _isLoadingSegment) &&
+              _errorMessage == null &&
+              !(_useWebRtc && _isLiveMode))
             Container(
               color: Colors.black54,
               child: const Center(
@@ -1569,7 +1664,7 @@ class _VerticalTimelineState extends State<_VerticalTimeline> {
                 borderRadius: BorderRadius.circular(5),
                 child: thumbnailUrl != null && thumbnailUrl.isNotEmpty
                     ? Image.network(
-                        '${AppConfig.streamingBaseUrl}$thumbnailUrl',
+                        UrlHelper.storageUrl(thumbnailUrl) ?? '',
                         fit: BoxFit.cover,
                         errorBuilder: (_, __, ___) => _thumbnailPlaceholder(),
                       )
