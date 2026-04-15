@@ -1,0 +1,75 @@
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# ZyraVision — Docker Context Exclusions
+# Reduz contexto de build de ~2.8 GB para ~5 MB
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+# ─── Version Control ─────────────────────────────
+.git
+.gitignore
+.gitattributes
+
+# ─── Dependencies (instaladas no container) ──────
+node_modules
+vendor
+
+# ─── IDE / Editor ────────────────────────────────
+.cursor
+.claude
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# ─── Environment / Secrets ───────────────────────
+.env
+.env.*
+!.env.example
+
+# ─── Storage / Logs / Cache ──────────────────────
+storage/logs/*
+storage/framework/cache/*
+storage/framework/sessions/*
+storage/framework/views/*
+storage/app/*
+bootstrap/cache/*
+
+# ─── Build Artifacts ─────────────────────────────
+public/build
+public/hot
+
+# ─── Documentation ───────────────────────────────
+docs
+*.md
+LICENSE
+
+# ─── Mobile App (Flutter — nao roda no backend) ──
+mobile
+
+# ─── Tests ───────────────────────────────────────
+tests
+phpunit.xml
+.phpunit.result.cache
+
+# ─── Frontend Build Config (nao necessario no PHP)
+postcss.config.js
+tailwind.config.js
+vite.config.ts
+tsconfig.json
+package.json
+package-lock.json
+
+# ─── Docker (evita recursao) ─────────────────────
+docker-compose*.yml
+Dockerfile
+
+# ─── OS Files ────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ─── Misc ────────────────────────────────────────
+scripts
+exporting
+sending
+resolve
+transferring

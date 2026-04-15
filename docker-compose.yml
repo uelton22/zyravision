@@ -1,10 +1,13 @@
 services:
   # ─── Laravel PHP-FPM ─────────────────────────────────────────
+  # Imagem base compartilhada por: app, queue, scheduler, reverb
+  # Build unico — todos os servicos PHP usam a mesma imagem
   app:
     build:
       context: .
       dockerfile: docker/php/Dockerfile
       target: development
+    image: zyravision-app:dev
     container_name: zyravision-app
     restart: unless-stopped
     volumes:
@@ -24,10 +27,6 @@ services:
       - PHP_OPCACHE_VALIDATE_TIMESTAMPS=1
 
   # ─── Nginx Web Server (Escalavel) ────────────────────────────
-  # Proxy HTTP + HLS + WebRTC. Stateless — facil de escalar.
-  # Escale via: WEB_REPLICAS=N no .env
-  # NOTA: Para WEB_REPLICAS > 1, remova o container_name e configure
-  #       um load balancer (traefik/haproxy) na frente.
   web:
     image: nginx:alpine
     container_name: zyravision-web
@@ -96,14 +95,9 @@ services:
       retries: 5
 
   # ─── Laravel Queue Worker (Horizon) — Escalavel ──────────────
-  # Processa jobs das filas: default, recordings, transcoding, notifications.
-  # Escale via: QUEUE_REPLICAS=N no .env
-  # Cada replica roda uma instancia do Horizon com seus supervisors.
+  # Reutiliza a imagem do app (zero build adicional)
   queue:
-    build:
-      context: .
-      dockerfile: docker/php/Dockerfile
-      target: development
+    image: zyravision-app:dev
     restart: unless-stopped
     command: php artisan horizon
     volumes:
@@ -126,11 +120,9 @@ services:
           memory: 128M
 
   # ─── Laravel Scheduler ───────────────────────────────────────
+  # Reutiliza a imagem do app (zero build adicional)
   scheduler:
-    build:
-      context: .
-      dockerfile: docker/php/Dockerfile
-      target: development
+    image: zyravision-app:dev
     container_name: zyravision-scheduler
     restart: unless-stopped
     user: root
@@ -164,11 +156,9 @@ services:
       - frontend
 
   # ─── Laravel Reverb (WebSocket Server) ───────────────────────
+  # Reutiliza a imagem do app (zero build adicional)
   reverb:
-    build:
-      context: .
-      dockerfile: docker/php/Dockerfile
-      target: development
+    image: zyravision-app:dev
     container_name: zyravision-reverb
     restart: unless-stopped
     command: php artisan reverb:start --host=0.0.0.0 --port=6001
@@ -184,14 +174,11 @@ services:
       - backend
 
   # ─── FFmpeg Transcoder Worker (Escalavel) ─────────────────────
-  # Container dedicado para transcodificacao de video.
-  # Cada worker pode gerenciar ate FFMPEG_MAX_CONCURRENT cameras simultaneas.
-  # Escale via: TRANSCODER_REPLICAS=N no .env
-  # Para desativar (cameras usam MediaMTX nativo): TRANSCODER_REPLICAS=0
   transcoder:
     build:
       context: .
       dockerfile: docker/transcoder/Dockerfile
+    image: zyravision-transcoder:dev
     restart: unless-stopped
     command: php artisan transcoder:worker --max-cameras=${FFMPEG_MAX_CONCURRENT:-10} --poll-interval=2 -v
     volumes:

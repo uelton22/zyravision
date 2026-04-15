@@ -1,58 +1,63 @@
 ###############################################
 # ZyraVision — FFmpeg Transcoder Worker
 #
-# Container dedicado para transcodificacao de video.
-# Roda processos FFmpeg gerenciados por um daemon Laravel.
-# Escalavel via deploy.replicas no docker-compose.
+# Multi-stage build otimizado:
+#   1. builder  — compila extensoes PHP (descartado)
+#   2. runtime  — PHP-CLI + FFmpeg (~350 MB)
+#
+# Extensoes minimas: apenas o necessario para
+# rodar o queue worker com acesso ao banco e Redis.
 ###############################################
 
-FROM php:8.4-cli-alpine AS base
+# ═══════════════════════════════════════════════
+# Stage 1: Builder — compila extensoes PHP
+# ═══════════════════════════════════════════════
+FROM php:8.4-cli-alpine AS builder
 
-# System dependencies (FFmpeg + PHP minimal para artisan)
-RUN apk add --no-cache \
-    curl \
-    ffmpeg \
-    libpng-dev \
-    libjpeg-turbo-dev \
-    freetype-dev \
+RUN apk add --no-cache --virtual .build-deps \
+    $PHPIZE_DEPS \
+    linux-headers \
     libzip-dev \
-    zip \
-    unzip \
     icu-dev \
     oniguruma-dev \
-    postgresql-dev \
-    linux-headers \
-    autoconf \
-    gcc \
-    g++ \
-    make
+    postgresql-dev
 
-# PHP extensions (minimal set for queue worker)
-RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
-    && docker-php-ext-install -j$(nproc) \
+RUN docker-php-ext-install -j$(nproc) \
     pdo \
     pdo_pgsql \
     pgsql \
     mbstring \
     pcntl \
     bcmath \
-    gd \
     zip \
     intl \
     opcache \
     sockets
 
-# Redis extension
-RUN pecl install redis && docker-php-ext-enable redis
+RUN pecl install redis \
+    && docker-php-ext-enable redis
 
-# Composer
+# ═══════════════════════════════════════════════
+# Stage 2: Runtime — imagem final com FFmpeg
+# ═══════════════════════════════════════════════
+FROM php:8.4-cli-alpine AS runtime
+
+RUN apk add --no-cache \
+    curl \
+    ffmpeg \
+    libzip \
+    icu-libs \
+    oniguruma \
+    libpq
+
+COPY --from=builder /usr/local/lib/php/extensions/ /usr/local/lib/php/extensions/
+COPY --from=builder /usr/local/etc/php/conf.d/ /usr/local/etc/php/conf.d/
+
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 
 WORKDIR /var/www/html
 
-# Health check: verify FFmpeg is available and daemon is running
 HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
     CMD ffmpeg -version > /dev/null 2>&1 && pgrep -f "transcoder:worker" > /dev/null 2>&1
 
-# Default command: run the transcoder worker daemon
 CMD ["php", "artisan", "transcoder:worker", "--verbose"]
